@@ -1,0 +1,32 @@
+# Secrets
+.env
+
+# Personal portfolio config (copy from the .example templates).
+tickers.yml
+holdings_meta.yml
+
+# Local data
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env.local
+.pytest_cache/
+
+# Local tooling / editor (machine-specific paths)
+.claude/
+.vscode/
+.idea/
+
+# Streamlit / OS
+.streamlit/secrets.toml
+.DS_Store
+
+# Claude project notes (personal)
+CLAUDE.md

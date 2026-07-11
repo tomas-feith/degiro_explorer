@@ -1,0 +1,20 @@
+# Copy this file to "tickers.yml" and adjust for your own holdings.
+# tickers.yml is gitignored so your portfolio composition stays private.
+#
+# Manual ISIN / DEGIRO-symbol -> Yahoo Finance ticker overrides.
+#
+# The price backfill first tries to resolve each product automatically from its
+# DEGIRO symbol. When that fails (sync.py prints "unresolved" warnings), add the
+# mapping here. Keys can be either the ISIN or the DEGIRO symbol; the value is the
+# exact Yahoo Finance ticker (including any exchange suffix, e.g. .AS, .DE, .L).
+
+# Benchmark Yahoo tickers shown on the Performance chart for comparison.
+benchmarks:
+  - IWDA.AS   # iShares Core MSCI World UCITS ETF (EUR)
+
+# Example overrides (replace with your own — these are just illustrative):
+overrides:
+  IE00B4L5Y983: EUNL.DE   # iShares Core MSCI World UCITS ETF (Xetra)
+  IE00B5BMR087: SXR8.DE   # iShares Core S&P 500 UCITS ETF (Acc, Xetra)
+  # US0378331005: AAPL    # Apple, NASDAQ
+  # VWRL: VWRL.AS         # Vanguard FTSE All-World, Amsterdam

@@ -1,0 +1,24 @@
+# Copy this file to "holdings_meta.yml" and adjust for your own holdings.
+# holdings_meta.yml is gitignored so your portfolio composition stays private.
+#
+# Per-holding classification for the Holdings tab (keyed by ISIN).
+# Editable — adjust if you reclassify or if a TER changes. TER is the fund's annual
+# expense ratio in percent. category: "core" (broad index) or "satellite" (thematic/bet).
+
+# Example entries (replace with your own):
+meta:
+  IE00B4L5Y983:   # iShares Core MSCI World UCITS ETF
+    category: core
+    region: Global
+    theme: Broad equity
+    ter: 0.20
+  IE00B5BMR087:   # iShares Core S&P 500 UCITS ETF (Acc)
+    category: core
+    region: United States
+    theme: Broad equity
+    ter: 0.07
+  IE00XXXXXXXX:    # Example thematic/satellite ETF
+    category: satellite
+    region: Global
+    theme: Thematic
+    ter: 0.50
