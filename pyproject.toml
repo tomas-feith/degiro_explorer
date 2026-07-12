@@ -1,0 +1,63 @@
+[project]
+name = "degiro-explorer"
+version = "0.1.0"
+description = "Fetch, reconstruct and explore your DEGIRO portfolio history in a Streamlit dashboard."
+readme = "README.md"
+requires-python = ">=3.14"
+license = { file = "LICENSE" }
+dependencies = [
+    "degiro-connector[qrcode]>=3.0.0",
+    "yfinance>=0.2.40",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "streamlit>=1.33",
+    "plotly>=5.20",
+    "pydantic-settings>=2.0",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.15",
+    "mypy>=1.15",
+    "pre-commit>=3.7",
+    "types-PyYAML>=6.0",
+]
+
+[tool.uv]
+# This is an application, not an installable library: config.py, scripts/ and
+# dashboard/ live outside the degiro_explorer package and are run directly.
+package = false
+
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+extend-exclude = [".venv", "data"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+]
+
+[tool.mypy]
+python_version = "3.14"
+files = ["config.py", "degiro_explorer", "scripts", "dashboard", "tests"]
+ignore_missing_imports = true
+warn_unused_ignores = false
+check_untyped_defs = true
+# Pragmatic settings for an app that wasn't written type-first: surface real
+# errors without demanding annotations on every function.
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

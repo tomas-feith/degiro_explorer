@@ -1,4 +1,5 @@
 """Thin wrapper around degiro-connector for authenticated, read-only access."""
+
 from __future__ import annotations
 
 import logging
@@ -113,8 +114,7 @@ def _resolve_int_account(api: TradingAPI) -> int:
     int_account = data.get("intAccount")
     if int_account is None:
         raise RuntimeError(
-            "Could not resolve intAccount from client details. "
-            "Set DEGIRO_INT_ACCOUNT in your .env file."
+            "Could not resolve intAccount from client details. Set DEGIRO_INT_ACCOUNT in your .env file."
         )
     return int(int_account)
 

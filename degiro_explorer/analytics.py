@@ -1,4 +1,5 @@
 """Derived metrics for the dashboard: returns, P/L, dividends, allocation."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -6,6 +7,7 @@ import pandas as pd
 import yaml
 
 from config import ROOT
+
 from . import prices, store
 
 
@@ -85,9 +87,7 @@ def position_return_history() -> pd.DataFrame:
         merged["name"] = products.loc[pid, "name"] if pid in products.index else str(pid)
         out.append(merged[["date", "name", "return_pct"]])
 
-    return pd.concat(out, ignore_index=True) if out else pd.DataFrame(
-        columns=["date", "name", "return_pct"]
-    )
+    return pd.concat(out, ignore_index=True) if out else pd.DataFrame(columns=["date", "name", "return_pct"])
 
 
 def position_performance() -> pd.DataFrame:
@@ -116,13 +116,15 @@ def position_performance() -> pd.DataFrame:
         if basis <= 0:
             continue
         name = products.loc[pid, "name"] if pid in products.index else str(pid)
-        rows.append({
-            "name": name,
-            "cost": basis,
-            "value": float(value),
-            "pnl": float(value) - basis,
-            "return_pct": (float(value) / basis - 1) * 100,
-        })
+        rows.append(
+            {
+                "name": name,
+                "cost": basis,
+                "value": float(value),
+                "pnl": float(value) - basis,
+                "return_pct": (float(value) / basis - 1) * 100,
+            }
+        )
     df = pd.DataFrame(rows)
     return df.sort_values("return_pct", ascending=False) if not df.empty else df
 
@@ -153,21 +155,20 @@ def performance_curves() -> pd.DataFrame:
     """
     df = daily_value()
     if df.empty:
-        return pd.DataFrame(
-            columns=["date", "pl_vs_invested", "pl_vs_invested_pct", "twr_pct"])
+        return pd.DataFrame(columns=["date", "pl_vs_invested", "pl_vs_invested_pct", "twr_pct"])
 
     twr_pct = (_twr_factors(df).cumprod() - 1) * 100
     pl_abs = df["total_value"] - df["net_invested"]
-    pl_pct = (pl_abs
-              / df["net_invested"].where(df["net_invested"] > 0)).replace(
-        [np.inf, -np.inf], np.nan) * 100
+    pl_pct = (pl_abs / df["net_invested"].where(df["net_invested"] > 0)).replace([np.inf, -np.inf], np.nan) * 100
 
-    return pd.DataFrame({
-        "date": df["date"],
-        "pl_vs_invested": pl_abs.to_numpy(),
-        "pl_vs_invested_pct": pl_pct.to_numpy(),
-        "twr_pct": twr_pct.to_numpy(),
-    })
+    return pd.DataFrame(
+        {
+            "date": df["date"],
+            "pl_vs_invested": pl_abs.to_numpy(),
+            "pl_vs_invested_pct": pl_pct.to_numpy(),
+            "twr_pct": twr_pct.to_numpy(),
+        }
+    )
 
 
 def benchmark_curves() -> pd.DataFrame:
@@ -191,10 +192,8 @@ def benchmark_curves() -> pd.DataFrame:
         if not base:
             continue
         ret = (s / base - 1) * 100
-        out.append(pd.DataFrame({"date": ret.index, "benchmark": ticker,
-                                 "return_pct": ret.to_numpy()}))
-    return pd.concat(out, ignore_index=True) if out else pd.DataFrame(
-        columns=["date", "benchmark", "return_pct"])
+        out.append(pd.DataFrame({"date": ret.index, "benchmark": ticker, "return_pct": ret.to_numpy()}))
+    return pd.concat(out, ignore_index=True) if out else pd.DataFrame(columns=["date", "benchmark", "return_pct"])
 
 
 def drawdown_series() -> pd.DataFrame:
@@ -212,12 +211,14 @@ def contributions_vs_growth() -> pd.DataFrame:
     df = daily_value()
     if df.empty:
         return pd.DataFrame(columns=["date", "contributions", "market_growth", "total_value"])
-    return pd.DataFrame({
-        "date": df["date"],
-        "contributions": df["net_invested"],
-        "market_growth": df["total_value"] - df["net_invested"],
-        "total_value": df["total_value"],
-    })
+    return pd.DataFrame(
+        {
+            "date": df["date"],
+            "contributions": df["net_invested"],
+            "market_growth": df["total_value"] - df["net_invested"],
+            "total_value": df["total_value"],
+        }
+    )
 
 
 def risk_metrics() -> dict:
@@ -231,8 +232,13 @@ def risk_metrics() -> dict:
     mean_ann = float(daily_ret.mean() * 252 * 100)
     sharpe = (mean_ann / vol) if vol else 0.0  # risk-free assumed 0
     max_dd = float(drawdown_series()["drawdown_pct"].min())
-    return {"volatility_pct": vol, "ann_return_pct": mean_ann,
-            "sharpe": sharpe, "max_drawdown_pct": max_dd, "days": int(len(df))}
+    return {
+        "volatility_pct": vol,
+        "ann_return_pct": mean_ann,
+        "sharpe": sharpe,
+        "max_drawdown_pct": max_dd,
+        "days": int(len(df)),
+    }
 
 
 def current_holdings() -> pd.DataFrame:
@@ -266,9 +272,7 @@ def dividends() -> pd.DataFrame:
     if div.empty:
         return pd.DataFrame(columns=["month", "amount", "currency"])
     div = div.assign(month=div["date"].dt.to_period("M").astype(str))
-    return div.groupby(["month", "currency"], as_index=False)["change"].sum().rename(
-        columns={"change": "amount"}
-    )
+    return div.groupby(["month", "currency"], as_index=False)["change"].sum().rename(columns={"change": "amount"})
 
 
 def fees() -> pd.DataFrame:
@@ -276,9 +280,7 @@ def fees() -> pd.DataFrame:
     if fee.empty:
         return pd.DataFrame(columns=["month", "amount", "currency"])
     fee = fee.assign(month=fee["date"].dt.to_period("M").astype(str))
-    return fee.groupby(["month", "currency"], as_index=False)["change"].sum().rename(
-        columns={"change": "amount"}
-    )
+    return fee.groupby(["month", "currency"], as_index=False)["change"].sum().rename(columns={"change": "amount"})
 
 
 def dividend_yield() -> pd.DataFrame:
@@ -303,8 +305,7 @@ def dividend_yield() -> pd.DataFrame:
     sec = sec.copy()
     sec["dividends"] = sec["isin"].map(lambda i: div_by_isin.get(str(i), 0.0))
     sec["yield_pct"] = (sec["dividends"] / sec["value"].where(sec["value"] > 0)) * 100
-    return sec[["name", "dividends", "value", "yield_pct"]].sort_values(
-        "yield_pct", ascending=False)
+    return sec[["name", "dividends", "value", "yield_pct"]].sort_values("yield_pct", ascending=False)
 
 
 def upcoming_payments() -> pd.DataFrame:
@@ -321,8 +322,7 @@ def transactions() -> pd.DataFrame:
         return tx
     tx["date"] = pd.to_datetime(tx["date"])
     merged = tx.merge(products, left_on="product_id", right_on="id", how="left")
-    cols = ["date", "name", "symbol", "buysell", "quantity", "price",
-            "total_plus_all_fees_in_base_currency"]
+    cols = ["date", "name", "symbol", "buysell", "quantity", "price", "total_plus_all_fees_in_base_currency"]
     return merged[[c for c in cols if c in merged]].sort_values("date", ascending=False)
 
 
@@ -416,8 +416,7 @@ def box3_reference_values() -> pd.DataFrame:
     for year in range(indexed.index.min().year, indexed.index.max().year + 1):
         jan1 = pd.Timestamp(year=year, month=1, day=1)
         if jan1 in indexed.index:
-            rows.append({"year": year, "reference_date": jan1.date().isoformat(),
-                         "value": float(indexed.loc[jan1])})
+            rows.append({"year": year, "reference_date": jan1.date().isoformat(), "value": float(indexed.loc[jan1])})
     return pd.DataFrame(rows)
 
 
@@ -471,14 +470,16 @@ def realized_gains() -> pd.DataFrame:
                     remaining -= take
                     if lot[0] <= 1e-9:
                         lots.pop(0)
-                rows.append({
-                    "date": t["date"].date().isoformat(),
-                    "name": products.get(pid, str(pid)),
-                    "quantity": sell_qty,
-                    "proceeds": unit_proceeds * sell_qty,
-                    "cost": matched_cost,
-                    "gain": unit_proceeds * sell_qty - matched_cost,
-                })
+                rows.append(
+                    {
+                        "date": t["date"].date().isoformat(),
+                        "name": products.get(pid, str(pid)),
+                        "quantity": sell_qty,
+                        "proceeds": unit_proceeds * sell_qty,
+                        "cost": matched_cost,
+                        "gain": unit_proceeds * sell_qty - matched_cost,
+                    }
+                )
     return pd.DataFrame(rows)
 
 
@@ -493,5 +494,4 @@ def reconstruction_delta(reconstructed_holdings: float) -> dict:
         actual = float(pd.to_numeric(pos.loc[is_security, "value"], errors="coerce").sum())
     delta = reconstructed_holdings - actual
     pct = (delta / actual * 100) if actual else 0.0
-    return {"reconstructed": reconstructed_holdings, "actual_holdings": actual,
-            "delta": delta, "delta_pct": pct}
+    return {"reconstructed": reconstructed_holdings, "actual_holdings": actual, "delta": delta, "delta_pct": pct}

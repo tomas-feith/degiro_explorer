@@ -1,4 +1,5 @@
 """Resolve products to Yahoo tickers and backfill historical prices + FX rates."""
+
 from __future__ import annotations
 
 import logging
@@ -9,6 +10,7 @@ import yaml
 import yfinance as yf
 
 from config import settings
+
 from . import store
 
 logger = logging.getLogger(__name__)
@@ -16,7 +18,7 @@ logger = logging.getLogger(__name__)
 # Map DEGIRO exchange ids / common currencies to Yahoo ticker suffixes as a fallback
 # heuristic when only a bare symbol is known. Not exhaustive — tickers.yml overrides win.
 CURRENCY_SUFFIX = {
-    "EUR": "",      # ambiguous; many EUR venues. Left blank — relies on symbol/override.
+    "EUR": "",  # ambiguous; many EUR venues. Left blank — relies on symbol/override.
     "USD": "",
     "GBP": ".L",
     "GBX": ".L",

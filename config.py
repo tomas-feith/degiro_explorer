@@ -1,4 +1,5 @@
 """Application configuration loaded from environment / .env file."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -40,15 +41,11 @@ class Settings(BaseSettings):
     def require_credentials(self) -> None:
         """Raise a friendly error if mandatory credentials are missing."""
         missing = [
-            name
-            for name, val in (("DEGIRO_USERNAME", self.username), ("DEGIRO_PASSWORD", self.password))
-            if not val
+            name for name, val in (("DEGIRO_USERNAME", self.username), ("DEGIRO_PASSWORD", self.password)) if not val
         ]
         if missing:
             raise SystemExit(
-                "Missing credentials: "
-                + ", ".join(missing)
-                + ".\nCopy .env.example to .env and fill it in."
+                "Missing credentials: " + ", ".join(missing) + ".\nCopy .env.example to .env and fill it in."
             )
 
 

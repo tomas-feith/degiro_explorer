@@ -4,6 +4,7 @@ The reports are pulled during a full sync (see scripts/sync.py) and saved under
 data/reports/. Numbers use the account locale: comma decimals, '.'/NBSP thousands
 separators, values quoted. Descriptions stay in the account language (Portuguese).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 from config import ROOT
+
 from . import analytics, store
 
 REPORTS_DIR = ROOT / "data" / "reports"
@@ -69,11 +71,13 @@ def read_position_report_lines() -> pd.DataFrame | None:
     if not path.exists():
         return None
     df = pd.read_csv(path)
-    lines = pd.DataFrame({
-        "name": df.iloc[:, 0].fillna("").astype(str),
-        "isin": df.iloc[:, 1].fillna("").astype(str).str.strip(),
-        "official": df.iloc[:, -1].map(_to_float).fillna(0.0),
-    })
+    lines = pd.DataFrame(
+        {
+            "name": df.iloc[:, 0].fillna("").astype(str),
+            "isin": df.iloc[:, 1].fillna("").astype(str).str.strip(),
+            "official": df.iloc[:, -1].map(_to_float).fillna(0.0),
+        }
+    )
     return lines[lines["isin"] != ""].reset_index(drop=True)
 
 
@@ -83,10 +87,12 @@ def read_account_report() -> pd.DataFrame | None:
     if not path.exists():
         return None
     df = pd.read_csv(path)
-    out = pd.DataFrame({
-        "description": df.iloc[:, 5].fillna("").astype(str),
-        "change": df.iloc[:, 8].map(_to_float),
-    })
+    out = pd.DataFrame(
+        {
+            "description": df.iloc[:, 5].fillna("").astype(str),
+            "change": df.iloc[:, 8].map(_to_float),
+        }
+    )
     return out
 
 
@@ -105,22 +111,18 @@ def crosscheck() -> pd.DataFrame:
         daily = analytics.daily_value()
         if not daily.empty:
             last = daily.iloc[-1]
-            rows.append(_row("Total portfolio value", float(last["total_value"]),
-                             pos["total_value"]))
-            rows.append(_row("Securities value", float(last["holdings_value"]),
-                             pos["securities_value"]))
+            rows.append(_row("Total portfolio value", float(last["total_value"]), pos["total_value"]))
+            rows.append(_row("Securities value", float(last["holdings_value"]), pos["securities_value"]))
             rows.append(_row("Cash", float(last["cash"]), pos["cash_value"]))
 
     acct = read_account_report()
     if acct is not None:
         div = analytics.dividends()
         app_div = float(div["amount"].sum()) if not div.empty else 0.0
-        rows.append(_row("Dividends (total)", app_div,
-                         _sum_by_keywords(acct, ("dividend",))))
+        rows.append(_row("Dividends (total)", app_div, _sum_by_keywords(acct, ("dividend",))))
         fee = analytics.fees()
         app_fee = float(fee["amount"].sum()) if not fee.empty else 0.0
-        rows.append(_row("Fees (total)", app_fee,
-                         _sum_by_keywords(acct, ("comiss", "taxa", "fee"))))
+        rows.append(_row("Fees (total)", app_fee, _sum_by_keywords(acct, ("comiss", "taxa", "fee"))))
 
     return pd.DataFrame(rows)
 
@@ -147,14 +149,16 @@ def crosscheck_holdings() -> pd.DataFrame:
         isin = line["isin"]
         app_value = app_by_isin.get(isin, 0.0)
         delta = app_value - line["official"]
-        rows.append({
-            "holding": line["name"],
-            "isin": isin,
-            "app": round(app_value, 2),
-            "official": round(float(line["official"]), 2),
-            "delta": round(delta, 2),
-            "match": "✓" if abs(delta) < 0.5 else "⚠",
-        })
+        rows.append(
+            {
+                "holding": line["name"],
+                "isin": isin,
+                "app": round(app_value, 2),
+                "official": round(float(line["official"]), 2),
+                "delta": round(delta, 2),
+                "match": "✓" if abs(delta) < 0.5 else "⚠",
+            }
+        )
     return pd.DataFrame(rows).sort_values("official", ascending=False)
 
 

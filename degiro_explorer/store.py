@@ -4,6 +4,7 @@ Raw tables (transactions, cash_movements, products, current_positions) come stra
 from DEGIRO. Cached market data (prices, fx_rates) and the derived daily_value series
 are kept separate so reconstruction can re-run without re-fetching from DEGIRO.
 """
+
 from __future__ import annotations
 
 import json
@@ -163,8 +164,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 def set_meta(conn: sqlite3.Connection, key: str, value) -> None:
     conn.execute(
-        "INSERT INTO meta(key, value) VALUES (?, ?) "
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        "INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (key, json.dumps(value)),
     )
 
@@ -177,6 +177,7 @@ def get_meta(conn: sqlite3.Connection, key: str, default=None):
 # ---------------------------------------------------------------------------
 # Writers (raw data)
 # ---------------------------------------------------------------------------
+
 
 def save_transactions(conn: sqlite3.Connection, rows: list[dict]) -> None:
     for r in rows:
@@ -257,8 +258,7 @@ def save_current_positions(conn: sqlite3.Connection, positions: list[dict]) -> N
     conn.execute("DELETE FROM current_positions")
     for p in positions:
         conn.execute(
-            "INSERT OR REPLACE INTO current_positions (product_id, size, price, value, raw) "
-            "VALUES (?,?,?,?,?)",
+            "INSERT OR REPLACE INTO current_positions (product_id, size, price, value, raw) VALUES (?,?,?,?,?)",
             (
                 p.get("product_id"),
                 _as_float(p.get("size")),
@@ -276,8 +276,7 @@ def save_prices(conn: sqlite3.Connection, ticker: str, series: list[tuple[str, f
     )
 
 
-def save_benchmark_prices(conn: sqlite3.Connection, ticker: str,
-                          series: list[tuple[str, float]]) -> None:
+def save_benchmark_prices(conn: sqlite3.Connection, ticker: str, series: list[tuple[str, float]]) -> None:
     conn.executemany(
         "INSERT OR REPLACE INTO benchmark_prices (ticker, date, close) VALUES (?,?,?)",
         [(ticker, d, c) for d, c in series],
@@ -322,8 +321,13 @@ def save_value_snapshot(conn: sqlite3.Connection, row: dict) -> None:
            ON CONFLICT(date) DO UPDATE SET
                holdings_value=excluded.holdings_value, cash=excluded.cash,
                total_value=excluded.total_value, net_invested=excluded.net_invested""",
-        (row["date"], _as_float(row.get("holdings_value")), _as_float(row.get("cash")),
-         _as_float(row.get("total_value")), _as_float(row.get("net_invested"))),
+        (
+            row["date"],
+            _as_float(row.get("holdings_value")),
+            _as_float(row.get("cash")),
+            _as_float(row.get("total_value")),
+            _as_float(row.get("net_invested")),
+        ),
     )
 
 
@@ -339,6 +343,7 @@ def save_position_values(conn: sqlite3.Connection, rows: list[tuple[str, int, fl
 # Readers (used by reconstruction + dashboard)
 # ---------------------------------------------------------------------------
 
+
 def read_df(table: str, db_path: Path | None = None) -> pd.DataFrame:
     with connection(db_path) as conn:
         return pd.read_sql_query(f"SELECT * FROM {table}", conn)
@@ -351,5 +356,5 @@ def _as_str(value):
 def _as_float(value):
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None

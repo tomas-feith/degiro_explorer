@@ -8,6 +8,7 @@ DEGIRO does not expose historical portfolio value, so we:
 The cash figure is an approximation (it sums all cash movements converted to base
 currency at the movement date); holdings valuation is exact given good price data.
 """
+
 from __future__ import annotations
 
 import json
@@ -119,7 +120,7 @@ def build_daily_value(base_currency: str) -> pd.DataFrame:
         movements["cur"] = movements["currency"].fillna(base_currency).str.upper()
 
         def to_base(r):
-            fx = fx_frame[r["cur"]] if r["cur"] in fx_frame else None
+            fx = fx_frame.get(r["cur"], None)
             rate = fx.asof(r["date"]) if fx is not None else 1.0
             return r["change"] * (rate if pd.notna(rate) else 1.0)
 
@@ -145,7 +146,7 @@ def build_daily_value(base_currency: str) -> pd.DataFrame:
         }
     )
     out = out.replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    out = _apply_snapshots(out)       # lock previously-observed days to exact values
+    out = _apply_snapshots(out)  # lock previously-observed days to exact values
     out = _pin_current_day(out, products)  # today = freshest DEGIRO values
     return out
 
@@ -198,13 +199,13 @@ def _current_position_values() -> dict[int, float]:
         try:
             raw = json.loads(row["raw"]) if row.get("raw") else {}
             ptype = str(raw.get("positionType", "")).upper()
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             raw = {}
         if ptype and ptype != "PRODUCT":
             continue
         try:
             pid = int(row.get("product_id"))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         value = row.get("value")
         if value is not None and not pd.isna(value):
@@ -235,13 +236,13 @@ def _pin_current_day(out: pd.DataFrame, products: pd.DataFrame) -> pd.DataFrame:
         try:
             raw = json.loads(row["raw"]) if row.get("raw") else {}
             ptype = str(raw.get("positionType", "")).upper()
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             pass
 
         pid = row.get("product_id")
         try:
             pid = int(pid)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             pid = None
 
         is_product = ptype == "PRODUCT" or (ptype == "" and pid in product_ids)
@@ -260,6 +261,8 @@ def _pin_current_day(out: pd.DataFrame, products: pd.DataFrame) -> pd.DataFrame:
     out.at[last, "total_value"] = out.at[last, "holdings_value"] + out.at[last, "cash"]
     logger.info(
         "Pinned today to DEGIRO: holdings=%.2f cash=%.2f total=%.2f",
-        out.at[last, "holdings_value"], out.at[last, "cash"], out.at[last, "total_value"],
+        out.at[last, "holdings_value"],
+        out.at[last, "cash"],
+        out.at[last, "total_value"],
     )
     return out

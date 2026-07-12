@@ -1,4 +1,5 @@
 """Download raw data from DEGIRO and normalise it into plain dicts."""
+
 from __future__ import annotations
 
 import logging
@@ -117,34 +118,36 @@ def fetch_upcoming_payments(session: Session) -> list[dict]:
     for item in data:
         if not isinstance(item, dict):
             continue
-        out.append({
-            "product_id": item.get("caId") or item.get("productId"),
-            "product": item.get("product"),
-            "currency": item.get("currency"),
-            "amount": item.get("amount"),
-            "pay_date": item.get("payDate"),
-            "description": item.get("description"),
-        })
+        out.append(
+            {
+                "product_id": item.get("caId") or item.get("productId"),
+                "product": item.get("product"),
+                "currency": item.get("currency"),
+                "amount": item.get("amount"),
+                "pay_date": item.get("payDate"),
+                "description": item.get("description"),
+            }
+        )
     logger.info("upcoming payments: %d", len(out))
     return out
 
 
-def fetch_account_report(session: Session, frm: date, to: date,
-                         country: str = "NL", lang: str = "en") -> str | None:
+def fetch_account_report(session: Session, frm: date, to: date, country: str = "NL", lang: str = "en") -> str | None:
     """Official DEGIRO account statement (cash movements) as CSV text."""
-    req = ReportRequest(country=country, lang=lang, format=Format.CSV,
-                        from_date=frm, to_date=to, int_account=session.int_account)
+    req = ReportRequest(
+        country=country, lang=lang, format=Format.CSV, from_date=frm, to_date=to, int_account=session.int_account
+    )
     rep = session.api.get_account_report(report_request=req, raw=False)
     content = getattr(rep, "content", None) if rep is not None else None
     logger.info("account report %s..%s -> %s chars", frm, to, len(content) if content else 0)
     return content
 
 
-def fetch_position_report(session: Session, on: date,
-                          country: str = "NL", lang: str = "en") -> str | None:
+def fetch_position_report(session: Session, on: date, country: str = "NL", lang: str = "en") -> str | None:
     """Official DEGIRO portfolio snapshot (positions + values) as CSV text."""
-    req = ReportRequest(country=country, lang=lang, format=Format.CSV,
-                        from_date=on, to_date=on, int_account=session.int_account)
+    req = ReportRequest(
+        country=country, lang=lang, format=Format.CSV, from_date=on, to_date=on, int_account=session.int_account
+    )
     rep = session.api.get_position_report(report_request=req, raw=False)
     content = getattr(rep, "content", None) if rep is not None else None
     logger.info("position report %s -> %s chars", on, len(content) if content else 0)
@@ -154,7 +157,7 @@ def fetch_position_report(session: Session, on: date,
 def _to_int(value):
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return value
 
 
@@ -162,5 +165,5 @@ def _as_int(value):
     """int(value) or None for non-numeric ids (e.g. cash 'FLATEX_EUR')."""
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None

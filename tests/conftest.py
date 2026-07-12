@@ -1,4 +1,5 @@
 """Pytest fixtures: an isolated temp SQLite DB pointed at by the app settings."""
+
 import sys
 from pathlib import Path
 

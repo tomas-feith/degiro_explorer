@@ -1,4 +1,5 @@
 """Unit tests for pure helpers (no DB)."""
+
 import pandas as pd
 
 from degiro_explorer import analytics, prices, reports
@@ -29,13 +30,15 @@ def test_to_float_locale_parsing():
 
 def test_resolve_tickers_handles_nan_and_override(monkeypatch):
     monkeypatch.setattr(prices, "_load_overrides", lambda: {"US0378331005": "AAPL"})
-    products = pd.DataFrame([
-        {"id": 1, "isin": "US0378331005", "symbol": "XXX", "currency": "USD", "name": "Apple"},
-        {"id": 2, "isin": "NL0000000000", "symbol": None, "currency": "EUR", "name": "NoSymbol"},
-        {"id": 3, "isin": "IEXXXX", "symbol": "VWRL", "currency": "GBP", "name": "GBP fund"},
-    ])
+    products = pd.DataFrame(
+        [
+            {"id": 1, "isin": "US0378331005", "symbol": "XXX", "currency": "USD", "name": "Apple"},
+            {"id": 2, "isin": "NL0000000000", "symbol": None, "currency": "EUR", "name": "NoSymbol"},
+            {"id": 3, "isin": "IEXXXX", "symbol": "VWRL", "currency": "GBP", "name": "GBP fund"},
+        ]
+    )
     mapping, unresolved = prices.resolve_tickers(products)
-    assert mapping[1] == "AAPL"            # ISIN override wins over symbol
-    assert mapping[3] == "VWRL.L"          # GBP -> .L suffix heuristic
+    assert mapping[1] == "AAPL"  # ISIN override wins over symbol
+    assert mapping[3] == "VWRL.L"  # GBP -> .L suffix heuristic
     assert 1 not in [u["id"] for u in unresolved]
     assert 2 in [u["id"] for u in unresolved]  # NaN symbol -> unresolved (not "nan")

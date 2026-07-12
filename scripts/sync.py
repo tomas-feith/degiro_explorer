@@ -3,6 +3,7 @@
 Usage:
     python scripts/sync.py [--start-year YYYY]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -36,10 +37,7 @@ def _fetch_reports(session) -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     today = date.today()
     tx_df = store.read_df("transactions")
-    start = (
-        pd.to_datetime(tx_df["date"]).min().date()
-        if not tx_df.empty else date(today.year, 1, 1)
-    )
+    start = pd.to_datetime(tx_df["date"]).min().date() if not tx_df.empty else date(today.year, 1, 1)
     try:
         account_csv = fetch.fetch_account_report(session, start, today)
         if account_csv:
@@ -56,11 +54,15 @@ def _fetch_reports(session) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Sync DEGIRO data and rebuild history.")
-    parser.add_argument("--start-year", type=int, default=DEFAULT_START_YEAR,
-                        help="Earliest year to pull (default: %(default)s).")
-    parser.add_argument("--offline", action="store_true",
-                        help="Skip DEGIRO login; re-run price backfill + reconstruction "
-                             "from already-stored data (use after editing tickers.yml).")
+    parser.add_argument(
+        "--start-year", type=int, default=DEFAULT_START_YEAR, help="Earliest year to pull (default: %(default)s)."
+    )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Skip DEGIRO login; re-run price backfill + reconstruction "
+        "from already-stored data (use after editing tickers.yml).",
+    )
     args = parser.parse_args()
 
     store.init_db()
@@ -80,7 +82,7 @@ def main() -> int:
         product_ids |= {m.get("product_id") for m in cash_movements if m.get("product_id")}
         positions = fetch.fetch_current_portfolio(session)
         product_ids |= {p.get("product_id") for p in positions if p.get("product_id")}
-        products = fetch.fetch_products(session, list(product_ids))
+        products = fetch.fetch_products(session, [pid for pid in product_ids if pid is not None])
 
         with store.connection() as conn:
             store.save_transactions(conn, transactions)
@@ -104,14 +106,14 @@ def main() -> int:
     if unresolved:
         logger.warning("Unresolved tickers (%d) — add them to tickers.yml:", len(unresolved))
         for u in unresolved:
-            logger.warning("  id=%s isin=%s symbol=%s name=%s",
-                           u["id"], u["isin"], u["symbol"], u["name"])
+            logger.warning("  id=%s isin=%s symbol=%s name=%s", u["id"], u["isin"], u["symbol"], u["name"])
 
     tx_df = store.read_df("transactions")
     if tx_df.empty:
         logger.warning("No transactions — skipping price backfill and reconstruction.")
         return 0
     import pandas as pd
+
     start = pd.to_datetime(tx_df["date"]).min().date()
     end = date.today()
 
@@ -131,6 +133,7 @@ def main() -> int:
 
     # 4. Sanity check
     from degiro_explorer import analytics
+
     if not daily.empty:
         recon_total = float(daily.iloc[-1]["total_value"])
         recon_holdings = float(daily.iloc[-1]["holdings_value"])
@@ -138,8 +141,10 @@ def main() -> int:
         logger.info("Reconstructed total value today: %.2f %s", recon_total, base_currency)
         logger.info(
             "Holdings sanity check: reconstructed=%.2f vs DEGIRO=%.2f (delta=%.2f, %.1f%%)",
-            delta["reconstructed"], delta["actual_holdings"],
-            delta["delta"], delta["delta_pct"],
+            delta["reconstructed"],
+            delta["actual_holdings"],
+            delta["delta"],
+            delta["delta_pct"],
         )
         if abs(delta["delta_pct"]) > 5:
             logger.warning("Large delta — check unresolved tickers / FX rates above.")

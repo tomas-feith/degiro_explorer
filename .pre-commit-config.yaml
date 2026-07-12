@@ -1,0 +1,32 @@
+# Pre-commit hooks for DEGIRO Explorer.
+# Install once:  uv run pre-commit install   (wires both pre-commit and pre-push)
+# Run manually:  uv run pre-commit run --all-files
+default_install_hook_types: [pre-commit, pre-push]
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.21
+    hooks:
+      - id: ruff-check      # lint
+        args: [--fix]
+      - id: ruff-format     # format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.2.0
+    hooks:
+      - id: mypy
+        # Type-check the whole project (paths configured in pyproject.toml).
+        pass_filenames: false
+        args: []
+        additional_dependencies:
+          - pydantic-settings>=2.0
+          - types-PyYAML>=6.0
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: uv run pytest
+        language: system
+        pass_filenames: false
+        types: [python]
+        stages: [pre-push]

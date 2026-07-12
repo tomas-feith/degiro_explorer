@@ -30,17 +30,18 @@ DEGIRO API ──fetch──▶ SQLite (raw)
 
 ## Setup
 
-Requires **Python ≥ 3.10**.
+Requires **Python ≥ 3.14** and [**uv**](https://docs.astral.sh/uv/) for dependency
+management ([install uv](https://docs.astral.sh/uv/getting-started/installation/)).
 
 ```bash
-python -m venv .venv
-# Windows PowerShell:
-.venv\Scripts\Activate.ps1
-# macOS/Linux:
-# source .venv/bin/activate
+# Create the virtualenv and install all dependencies (incl. dev tools) from uv.lock:
+uv sync
 
-pip install -r requirements.txt
+# Optional: enable the pre-commit hooks (ruff, mypy on commit; pytest on push):
+uv run pre-commit install
 ```
+
+Run commands inside the environment with `uv run` (e.g. `uv run streamlit run dashboard/app.py`).
 
 Create your credentials and portfolio-config files from the templates:
 
@@ -123,3 +124,18 @@ timing); a large delta usually means an unresolved ticker or FX issue.
 | `degiro_explorer/analytics.py` | Returns, P/L, dividends, allocation |
 | `scripts/sync.py` | Orchestrates the full pipeline |
 | `dashboard/app.py` | Streamlit dashboard |
+
+## Development
+
+Dependencies and tooling are managed with **uv** (`pyproject.toml` + `uv.lock`).
+
+```bash
+uv sync                      # install runtime + dev dependencies
+uv run ruff check .          # lint
+uv run ruff format .         # auto-format
+uv run mypy .                # type-check
+uv run pytest                # tests
+```
+
+The same checks run on every push/PR via GitHub Actions (`.github/workflows/ci.yml`) and,
+optionally, locally through pre-commit hooks (`uv run pre-commit install`).

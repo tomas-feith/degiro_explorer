@@ -15,7 +15,7 @@ Set-Location -LiteralPath $PSScriptRoot
 $python = ".\.venv\Scripts\python.exe"
 $streamlit = ".\.venv\Scripts\streamlit.exe"
 if (-not (Test-Path $python)) {
-    Write-Error "virtualenv not found at $python`ncreate it first, e.g.:  python -m venv .venv ; .\.venv\Scripts\pip install -r requirements.txt"
+    Write-Error "virtualenv not found at $python`ncreate it first with:  uv sync"
     exit 1
 }
 

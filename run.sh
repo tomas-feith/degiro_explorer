@@ -15,7 +15,7 @@ cd "$(dirname "$0")"
 VENV_ACTIVATE=".venv/Scripts/activate"
 if [[ ! -f "$VENV_ACTIVATE" ]]; then
     echo "error: virtualenv not found at $VENV_ACTIVATE" >&2
-    echo "create it first, e.g.:  python -m venv .venv && .venv/Scripts/pip install -r requirements.txt" >&2
+    echo "create it first with:  uv sync" >&2
     exit 1
 fi
 
