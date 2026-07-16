@@ -30,5 +30,8 @@ else
     python scripts/sync.py "$@"
 fi
 
-echo ">> launching dashboard..."
-exec streamlit run dashboard/app.py
+# 8501 is Streamlit's default and is often taken by another local dashboard.
+PORT="$(python scripts/freeport.py)"
+
+echo ">> launching dashboard on port $PORT..."
+exec streamlit run dashboard/app.py --server.port "$PORT"

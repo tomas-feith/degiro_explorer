@@ -31,5 +31,9 @@ if ($args.Count -ge 1 -and $args[0] -eq "--no-sync") {
     }
 }
 
-Write-Host ">> launching dashboard..."
-& $streamlit run dashboard\app.py
+# 8501 is Streamlit's default and is often taken by another local dashboard.
+$port = & $python scripts\freeport.py
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+Write-Host ">> launching dashboard on port $port..."
+& $streamlit run dashboard\app.py --server.port $port

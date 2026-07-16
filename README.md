@@ -70,6 +70,9 @@ python scripts/sync.py
 streamlit run dashboard/app.py
 ```
 
+Prefer `./run.sh` (or `.\run.ps1` on Windows), which syncs and then launches the
+dashboard on port 8501 — or the next free port, if another app already has 8501.
+
 `sync.py` is incremental-friendly — re-run it any time to pull new activity and refresh
 the reconstruction.
 
