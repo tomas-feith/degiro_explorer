@@ -31,6 +31,27 @@ def test_box3_params_unknown_year_falls_back_to_latest():
     assert analytics.box3_params(1999) is analytics.BOX3_PARAMS[analytics.LATEST_BOX3_YEAR]
 
 
+def test_box3_params_2027_is_flagged_provisional():
+    """2027 figures are announced, not enacted, and the allowance is a placeholder."""
+    p = analytics.box3_params(2027)
+    assert p.deemed_return_pct == 6.37
+    assert p.provisional is True
+    assert analytics.box3_params(2026).provisional is False
+
+
+def test_drop_closed_removes_sold_out_positions():
+    """DEGIRO leaves a size-0 row for a product sold today; it must not show as a holding."""
+    pos = pd.DataFrame(
+        [
+            {"product_id": 1, "size": 21.0, "value": 15141.42},
+            {"product_id": 2, "size": 0.0, "value": 0.0},  # sold out today
+            {"product_id": 3, "size": -5.0, "value": -250.0},  # short: still a position
+        ]
+    )
+    kept = analytics._drop_closed(pos)
+    assert sorted(kept["product_id"]) == [1, 3]
+
+
 def test_to_float_locale_parsing():
     # comma decimals, NBSP/Â thousands separators, quoting
     assert reports._to_float("1096,87") == 1096.87

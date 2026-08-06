@@ -258,6 +258,7 @@ def current_holdings() -> pd.DataFrame:
     pos = pos.copy()
     pos["pid"] = pd.to_numeric(pos["product_id"], errors="coerce")
     pos = pos.dropna(subset=["pid"])
+    pos = _drop_closed(pos)
     merged = pos.merge(products, left_on="pid", right_on="id", how="left")
     cols = ["name", "symbol", "isin", "currency", "size", "price", "value"]
     return merged[[c for c in cols if c in merged]].sort_values("value", ascending=False)
@@ -341,6 +342,19 @@ def _holdings_meta() -> dict:
     return {str(k): (v or {}) for k, v in (doc.get("meta") or {}).items()}
 
 
+def _drop_closed(pos: pd.DataFrame) -> pd.DataFrame:
+    """Drop fully-sold positions.
+
+    DEGIRO keeps a `size: 0` row in the portfolio for a product you closed (at least for
+    the rest of the trading day), so without this a sold-out holding lingers in the
+    holdings table and the allocation breakdowns as a 0.00 / 0.0% row.
+    """
+    if "size" not in pos:
+        return pos
+    size = pd.to_numeric(pos["size"], errors="coerce").fillna(0.0)
+    return pos.loc[size != 0]
+
+
 def current_securities() -> pd.DataFrame:
     """Current security positions with isin, name, value, weight% (cash excluded)."""
     pos = store.read_df("current_positions")
@@ -350,6 +364,7 @@ def current_securities() -> pd.DataFrame:
     pos = pos.copy()
     pos["pid"] = pd.to_numeric(pos["product_id"], errors="coerce")
     pos = pos.dropna(subset=["pid"])
+    pos = _drop_closed(pos)
     pos["value"] = pd.to_numeric(pos["value"], errors="coerce").fillna(0.0)
     merged = pos.merge(products, left_on="pid", right_on="id", how="left")
     total = merged["value"].sum()
@@ -441,10 +456,17 @@ class Box3Params:
 # return, and announced figures do get revised before they are enacted (the planned
 # 2026 hike to 7.78% with a EUR 51,396 allowance was scrapped; the enacted figures
 # are 6.00% and EUR 59,357).
+#
+# 2027 is PROVISIONAL. The 6.37% investment forfait has been reported but not enacted,
+# and the 2027 heffingsvrij vermogen has not been published at all — the allowance below
+# is 2026's carried forward as a placeholder, so the estimate is conservative-ish but
+# wrong in a knowable way. Revisit after Prinsjesdag (Sep 2026) and drop `provisional`
+# once the figures are in the enacted Belastingplan.
 BOX3_PARAMS: dict[int, Box3Params] = {
     2024: Box3Params(deemed_return_pct=6.04, allowance=57000.0, rate_pct=36.0),
     2025: Box3Params(deemed_return_pct=5.88, allowance=57684.0, rate_pct=36.0),
     2026: Box3Params(deemed_return_pct=6.00, allowance=59357.0, rate_pct=36.0),
+    2027: Box3Params(deemed_return_pct=6.37, allowance=59357.0, rate_pct=36.0, provisional=True),
 }
 
 LATEST_BOX3_YEAR = max(BOX3_PARAMS)

@@ -651,6 +651,12 @@ def _tax_tab(data, base):
     y0, _ = st.columns([1, 3])
     tax_year = y0.selectbox("Tax year", years, index=0)
     params = analytics.box3_params(tax_year)
+    if params.provisional:
+        st.warning(
+            f"⚠️ The {tax_year} figures are **provisional** — announced but not yet enacted, "
+            f"and the tax-free allowance has not been published ({tax_year - 1}'s is used as a "
+            "placeholder). Treat this year's estimate as indicative only."
+        )
 
     latest_value = float(data["daily"]["total_value"].iloc[-1]) if not data["daily"].empty else 0.0
     c1, c2, c3 = st.columns(3)
