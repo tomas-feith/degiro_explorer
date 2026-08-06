@@ -18,15 +18,28 @@ import sys
 
 DEFAULT_PORT = 8501
 SEARCH_LIMIT = 50
+CONNECT_TIMEOUT = 0.25  # local-only probe; a listener answers far inside this
 
 
 def is_free(port: int) -> bool:
     """True if a server can bind this port on all interfaces, as Streamlit does.
 
-    Binds without SO_REUSEADDR on purpose: on Windows that option permits
-    binding a port another process already holds, which would report every
-    port as free.
+    Two checks, because neither alone is enough on Windows:
+
+    1. Connect. Streamlit's server (uvicorn) binds with SO_REUSEADDR, which on
+       Windows lets a second process bind the very same port -- so bind() alone
+       happily reports a port that already has a dashboard on it as free, and
+       you end up with two servers on one port. SO_EXCLUSIVEADDRUSE does not
+       help here: it only protects a port when the *first* binder sets it. A
+       successful connection is direct proof that something is listening.
+    2. Bind. Catches ports that are reserved or bound but not yet listening,
+       which a connect probe cannot see.
     """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(CONNECT_TIMEOUT)
+        if probe.connect_ex(("127.0.0.1", port)) == 0:
+            return False
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         try:
             sock.bind(("", port))
