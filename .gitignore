@@ -18,6 +18,10 @@ __pycache__/
 venv/
 .env.local
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 
 # Local tooling / editor (machine-specific paths)
 .claude/
