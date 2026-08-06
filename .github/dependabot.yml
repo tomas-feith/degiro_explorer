@@ -1,0 +1,32 @@
+version: 2
+
+# Keeps CI action pins and Python deps from silently rotting. This repo drifted to
+# checkout@v4 / setup-uv@v5 before anyone noticed, so let Dependabot open the PRs and
+# let CI decide whether they are safe.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      # One PR for all action bumps: they are independent and individually trivial.
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps
+    groups:
+      # Dev tooling moves fast (ruff especially) and a failure is a lint diff, not a
+      # data-correctness bug -- safe to batch. Runtime deps stay separate so a
+      # degiro-connector or yfinance bump gets reviewed on its own.
+      dev-tooling:
+        dependency-type: development
+        patterns:
+          - "*"

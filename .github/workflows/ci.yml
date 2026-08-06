@@ -9,9 +9,20 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: nothing here needs to write to the repo.
+permissions:
+  contents: read
+
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    # Windows is the only platform this project is actually run on, and it carries
+    # Windows-specific logic (freeport.py's bind semantics, console encoding), so an
+    # Ubuntu-only matrix would be blind to its most likely class of bug.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
 
@@ -38,3 +49,18 @@ jobs:
 
       - name: Pytest
         run: uv run pytest
+
+  secret-scan:
+    # This repo sits next to real brokerage credentials; .gitignore is the only thing
+    # keeping .env out of history, so verify that held.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history: gitleaks scans commits, not just the worktree
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITLEAKS_LICENSE is only required for organisation-owned repos.

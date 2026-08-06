@@ -1,0 +1,12 @@
+# Normalise line endings so the Windows CI job sees the same bytes as Ubuntu --
+# without this, a CRLF checkout can fail `ruff format --check` on Windows only.
+* text=auto eol=lf
+
+# PowerShell 5.1 wants CRLF (and UTF-8 *with* BOM, which git does not manage here).
+*.ps1 text eol=crlf
+
+# bash breaks on CRLF.
+*.sh text eol=lf
+
+uv.lock text eol=lf
+*.db binary

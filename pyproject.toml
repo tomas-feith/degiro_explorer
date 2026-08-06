@@ -20,6 +20,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pytest-cov>=5.0",
     "ruff>=0.16",
     "mypy>=2.3",
     "pre-commit>=3.7",
@@ -60,4 +61,21 @@ disallow_untyped_defs = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q --cov --cov-report=term-missing"
+# For a targeted run that would trip the floor: uv run pytest -k foo --no-cov
+
+[tool.coverage.run]
+source = ["degiro_explorer", "scripts"]
+source_pkgs = ["config"] # top-level module, not a package dir -- `source` would skip it
+omit = ["dashboard/*"] # Streamlit UI: exercised by running it, not by unit tests
+
+[tool.coverage.report]
+# A ratchet, not an aspiration: currently ~43%, so this only catches regressions.
+# Raise it as tests land rather than picking a number the suite cannot honestly meet.
+fail_under = 40
+show_missing = true
+exclude_also = [
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]

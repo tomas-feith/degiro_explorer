@@ -1,0 +1,13 @@
+title = "DEGIRO Explorer gitleaks config"
+
+# Start from gitleaks' built-in rules; this file only narrows false positives.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Template files contain placeholders, not credentials."
+paths = [
+    '''\.env\.example$''',
+    '''tickers\.yml\.example$''',
+    '''holdings_meta\.yml\.example$''',
+]

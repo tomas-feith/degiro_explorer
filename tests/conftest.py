@@ -7,6 +7,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+# scripts/ is not a package (its modules are run directly), so import them the same way
+# sync.py does -- as top-level modules. Importing "scripts.freeport" instead would make
+# mypy see the same file under two module names.
+sys.path.insert(0, str(ROOT / "scripts"))
 
 
 @pytest.fixture
