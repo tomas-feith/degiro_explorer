@@ -156,6 +156,14 @@ def _apply_snapshots(out: pd.DataFrame) -> pd.DataFrame:
 
     Snapshots were pinned to DEGIRO when captured, so they are exact and must not be
     overwritten by later Yahoo price revisions.
+
+    TODAY IS DELIBERATELY EXCLUDED. Today's row is still moving: a deposit or trade that
+    lands after an earlier sync would otherwise be locked out by that sync's snapshot,
+    and since every sync re-saves the snapshot from the (already clobbered) frame, the
+    stale figure sticks permanently. `_pin_current_day` re-pins holdings and cash from
+    DEGIRO afterwards, which masked this for those two columns but not for net_invested
+    — a EUR 1,000 same-day deposit went missing from net_invested and inflated P/L by
+    exactly that much. Only past days are immutable.
     """
     snaps = store.read_df("value_snapshots")
     if out.empty or snaps.empty:
@@ -163,7 +171,7 @@ def _apply_snapshots(out: pd.DataFrame) -> pd.DataFrame:
     cols = ["holdings_value", "cash", "total_value", "net_invested"]
     snap_by_date = snaps.set_index("date")
     out = out.set_index("date")
-    common = out.index.intersection(snap_by_date.index)
+    common = out.index.intersection(snap_by_date.index).difference([date.today().isoformat()])
     for c in cols:
         out.loc[common, c] = snap_by_date.loc[common, c]
     return out.reset_index()

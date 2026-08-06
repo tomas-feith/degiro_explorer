@@ -96,6 +96,49 @@ def test_snapshot_overrides_reconstruction(tmp_db):
     assert abs(daily.loc[snap_day, "total_value"] - 12350.0) < 1e-6
 
 
+def test_todays_snapshot_does_not_freeze_a_same_day_deposit(tmp_db):
+    """A snapshot taken earlier today must not lock today's row.
+
+    Regression: an intraday sync wrote a snapshot, then a EUR 1,000 deposit landed. The
+    next sync's `_apply_snapshots` restored the pre-deposit net_invested and re-saved it,
+    so the deposit vanished permanently and P/L was overstated by exactly that amount.
+    `_pin_current_day` hid it for holdings/cash, which is why only net_invested drifted.
+    """
+    buy_day = (date.today() - timedelta(days=5)).isoformat()
+    _seed_basic(buy_day)
+    today = date.today().isoformat()
+    with store.connection() as conn:
+        # Extra deposit today, after the stale snapshot below was captured.
+        store.save_cash_movements(
+            conn,
+            [
+                {
+                    "id": 102,
+                    "date": today,
+                    "value_date": today,
+                    "product_id": None,
+                    "type": "CASH_TRANSACTION",
+                    "description": "flatex Deposit",
+                    "currency": "EUR",
+                    "change": 1000.0,
+                    "balance": {},
+                }
+            ],
+        )
+        store.save_value_snapshot(
+            conn,
+            {
+                "date": today,
+                "holdings_value": 2000.0,
+                "cash": 0.0,
+                "total_value": 2000.0,
+                "net_invested": 1000.0,  # stale: predates the deposit above
+            },
+        )
+    daily = reconstruct.build_daily_value("EUR").set_index("date")
+    assert abs(daily.loc[today, "net_invested"] - 2000.0) < 1e-6
+
+
 def test_twr_is_deposit_proof(tmp_db):
     # Day0 deposit 100, value 100. Day1 +10% (value 110). Day2 deposit +100 (value 210, no market move).
     rows = pd.DataFrame(
