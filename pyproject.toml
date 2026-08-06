@@ -20,8 +20,8 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.0",
-    "ruff>=0.15",
-    "mypy>=1.15",
+    "ruff>=0.16",
+    "mypy>=2.3",
     "pre-commit>=3.7",
     "types-PyYAML>=6.0",
 ]

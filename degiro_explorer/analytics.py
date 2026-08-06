@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 import yaml
 
-from config import ROOT
+from config import ROOT, settings
 
 from . import prices, store
 
@@ -230,12 +232,17 @@ def risk_metrics() -> dict:
     daily_ret = daily_ret.iloc[1:]  # drop the forced day-0 = 0
     vol = float(daily_ret.std() * np.sqrt(252) * 100)
     mean_ann = float(daily_ret.mean() * 252 * 100)
-    sharpe = (mean_ann / vol) if vol else 0.0  # risk-free assumed 0
+    # Sharpe is the EXCESS return per unit of volatility. The risk-free rate is
+    # configurable (DEGIRO_RISK_FREE_PCT); with EUR short rates well above zero,
+    # leaving it at 0 overstates the ratio.
+    rf = float(settings.risk_free_pct)
+    sharpe = ((mean_ann - rf) / vol) if vol else 0.0
     max_dd = float(drawdown_series()["drawdown_pct"].min())
     return {
         "volatility_pct": vol,
         "ann_return_pct": mean_ann,
         "sharpe": sharpe,
+        "risk_free_pct": rf,
         "max_drawdown_pct": max_dd,
         "days": int(len(df)),
     }
@@ -418,6 +425,34 @@ def box3_reference_values() -> pd.DataFrame:
         if jan1 in indexed.index:
             rows.append({"year": year, "reference_date": jan1.date().isoformat(), "value": float(indexed.loc[jan1])})
     return pd.DataFrame(rows)
+
+
+@dataclass(frozen=True)
+class Box3Params:
+    """NL Box 3 parameters for one tax year (investments / 'overige bezittingen')."""
+
+    deemed_return_pct: float
+    allowance: float  # heffingsvrij vermogen, per person
+    rate_pct: float
+    provisional: bool = False
+
+
+# Verify against the Belastingdienst each year — Box 3 is mid-reform toward actual
+# return, and announced figures do get revised before they are enacted (the planned
+# 2026 hike to 7.78% with a EUR 51,396 allowance was scrapped; the enacted figures
+# are 6.00% and EUR 59,357).
+BOX3_PARAMS: dict[int, Box3Params] = {
+    2024: Box3Params(deemed_return_pct=6.04, allowance=57000.0, rate_pct=36.0),
+    2025: Box3Params(deemed_return_pct=5.88, allowance=57684.0, rate_pct=36.0),
+    2026: Box3Params(deemed_return_pct=6.00, allowance=59357.0, rate_pct=36.0),
+}
+
+LATEST_BOX3_YEAR = max(BOX3_PARAMS)
+
+
+def box3_params(year: int) -> Box3Params:
+    """Parameters for `year`, falling back to the most recent year we know about."""
+    return BOX3_PARAMS.get(year, BOX3_PARAMS[LATEST_BOX3_YEAR])
 
 
 def box3_tax(value: float, deemed_return_pct: float, allowance: float, rate_pct: float) -> dict:

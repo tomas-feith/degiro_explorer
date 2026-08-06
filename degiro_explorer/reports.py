@@ -19,6 +19,11 @@ REPORTS_DIR = ROOT / "data" / "reports"
 ACCOUNT_CSV = "account_report.csv"
 POSITION_CSV = "position_report.csv"
 
+# A figure counts as reconciled only within one cent. Everything currently matches the
+# official reports exactly, so anything above rounding noise is a real discrepancy and
+# should surface as a warning rather than be absorbed by a loose tolerance.
+MATCH_TOLERANCE = 0.01
+
 
 def _reports_dir() -> Path:
     with store.connection() as conn:
@@ -156,7 +161,7 @@ def crosscheck_holdings() -> pd.DataFrame:
                 "app": round(app_value, 2),
                 "official": round(float(line["official"]), 2),
                 "delta": round(delta, 2),
-                "match": "✓" if abs(delta) < 0.5 else "⚠",
+                "match": "✓" if abs(delta) <= MATCH_TOLERANCE else "⚠",
             }
         )
     return pd.DataFrame(rows).sort_values("official", ascending=False)
@@ -169,5 +174,5 @@ def _row(label: str, app_value: float, official: float) -> dict:
         "app": round(app_value, 2),
         "official": round(official, 2),
         "delta": round(delta, 2),
-        "match": "✓" if abs(delta) < 0.5 else "⚠",
+        "match": "✓" if abs(delta) <= MATCH_TOLERANCE else "⚠",
     }

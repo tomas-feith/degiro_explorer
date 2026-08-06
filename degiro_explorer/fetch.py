@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 
+import pandas as pd
 from degiro_connector.trading.models.account import (
     Format,
     OverviewRequest,
@@ -14,12 +15,36 @@ from degiro_connector.trading.models.account import (
 )
 from degiro_connector.trading.models.transaction import HistoryRequest
 
+from config import settings
+
+from . import store
 from .client import Session
 
 logger = logging.getLogger(__name__)
 
 # DEGIRO was founded in 2013; safe lower bound when the open date is unknown.
+# Both history endpoints are walked year-by-year, so scanning from here on every sync
+# costs one empty round-trip per endpoint per year before the account existed. Callers
+# should prefer resolve_start_year(), which narrows this to the stored history.
 DEFAULT_START_YEAR = 2013
+
+
+def resolve_start_year() -> int:
+    """Earliest year worth pulling: explicit setting, else the stored history.
+
+    A fresh database has no transactions to learn from, so it falls back to
+    DEFAULT_START_YEAR and does the one wide scan that discovers the account's real
+    start; every later sync then narrows to that.
+    """
+    if settings.start_year:
+        return int(settings.start_year)
+    tx = store.read_df("transactions")
+    if tx.empty:
+        return DEFAULT_START_YEAR
+    earliest = pd.to_datetime(tx["date"], utc=True, format="mixed").min()
+    if pd.isna(earliest):
+        return DEFAULT_START_YEAR
+    return int(earliest.year)
 
 
 def _year_ranges(start_year: int, end: date) -> list[tuple[date, date]]:

@@ -222,11 +222,12 @@ def main() -> None:
                 "full year, so it can look extreme in either direction.",
             )
             r3.metric(
-                "Sharpe (rf=0)",
+                f"Sharpe (rf={risk['risk_free_pct']:.1f}%)",
                 f"{risk['sharpe']:.2f}",
-                help="Return earned per unit of volatility (annualised return ÷ "
-                "volatility, assuming a 0% risk-free rate). A rough 'bang for "
-                "your risk' score: >1 is decent, <0 means you lost money. "
+                help="Return earned per unit of volatility ((annualised return − "
+                "risk-free rate) ÷ volatility). A rough 'bang for your risk' "
+                "score: >1 is decent, <0 means you did worse than cash. The "
+                "risk-free rate is set by DEGIRO_RISK_FREE_PCT in .env. "
                 "Unreliable over such a short window.",
             )
             r4.metric(
@@ -642,9 +643,15 @@ def _tax_tab(data, base):
     # 2. Rough Box 3 estimate
     st.subheader("Rough Box 3 estimate")
     st.caption(
-        "Parameters change yearly — defaults shown for reference, edit as needed. "
-        "2025: investments 5.88%, allowance €57,684 (single); 2026 allowance €51,396."
+        "Parameters change yearly — pick a tax year to load the official figures, then "
+        "edit them if needed. Always verify against the Belastingdienst: Box 3 is "
+        "mid-reform and announced figures get revised before they are enacted."
     )
+    years = sorted(analytics.BOX3_PARAMS, reverse=True)
+    y0, _ = st.columns([1, 3])
+    tax_year = y0.selectbox("Tax year", years, index=0)
+    params = analytics.box3_params(tax_year)
+
     latest_value = float(data["daily"]["total_value"].iloc[-1]) if not data["daily"].empty else 0.0
     c1, c2, c3 = st.columns(3)
     value = c1.number_input(
@@ -654,11 +661,23 @@ def _tax_tab(data, base):
         step=1000.0,
         help="Defaults to your latest total value as a proxy for the next peildatum.",
     )
-    deemed = c2.number_input("Deemed return % (investments)", min_value=0.0, value=5.88, step=0.01)
-    rate = c3.number_input("Tax rate %", min_value=0.0, value=36.0, step=0.5)
+    deemed = c2.number_input(
+        "Deemed return % (investments)",
+        min_value=0.0,
+        value=params.deemed_return_pct,
+        step=0.01,
+        key=f"box3_deemed_{tax_year}",
+    )
+    rate = c3.number_input("Tax rate %", min_value=0.0, value=params.rate_pct, step=0.5, key=f"box3_rate_{tax_year}")
     c4, c5 = st.columns(2)
     partners = c4.checkbox("Fiscal partners (double allowance)", value=False)
-    allowance = c5.number_input("Tax-free allowance (€)", min_value=0.0, value=51396.0, step=100.0)
+    allowance = c5.number_input(
+        "Tax-free allowance (€, per person)",
+        min_value=0.0,
+        value=params.allowance,
+        step=100.0,
+        key=f"box3_allowance_{tax_year}",
+    )
     if partners:
         allowance *= 2
 

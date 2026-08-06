@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     totp_secret: str = ""
     int_account: int | None = None
     db_path: str = "data/degiro.db"
+    # Earliest year to pull from DEGIRO. Blank -> derived from the earliest stored
+    # transaction (falls back to DEFAULT_START_YEAR on an empty database).
+    start_year: int | None = None
+    # Annualised risk-free rate (%) used as the Sharpe-ratio hurdle.
+    risk_free_pct: float = 2.0
 
     @property
     def db_file(self) -> Path:

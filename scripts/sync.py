@@ -55,7 +55,11 @@ def _fetch_reports(session) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Sync DEGIRO data and rebuild history.")
     parser.add_argument(
-        "--start-year", type=int, default=DEFAULT_START_YEAR, help="Earliest year to pull (default: %(default)s)."
+        "--start-year",
+        type=int,
+        default=None,
+        help="Earliest year to pull. Default: derived from the earliest stored "
+        f"transaction, or {DEFAULT_START_YEAR} on an empty database.",
     )
     parser.add_argument(
         "--offline",
@@ -75,9 +79,12 @@ def main() -> int:
         session = connect()
         base_currency = session.base_currency
 
+        start_year = args.start_year or fetch.resolve_start_year()
+        logger.info("Pulling history from %d onwards.", start_year)
+
         # 1. Raw data from DEGIRO
-        transactions = fetch.fetch_transactions(session, start_year=args.start_year)
-        cash_movements = fetch.fetch_cash_movements(session, start_year=args.start_year)
+        transactions = fetch.fetch_transactions(session, start_year=start_year)
+        cash_movements = fetch.fetch_cash_movements(session, start_year=start_year)
         product_ids = {t.get("product_id") for t in transactions if t.get("product_id") is not None}
         product_ids |= {m.get("product_id") for m in cash_movements if m.get("product_id")}
         positions = fetch.fetch_current_portfolio(session)
