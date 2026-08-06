@@ -73,6 +73,31 @@ def test_resolve_start_year_uses_earliest_transaction(tmp_db, monkeypatch):
     assert fetch.resolve_start_year() == 2026
 
 
+def test_resolve_start_year_spans_cash_movements(tmp_db, monkeypatch):
+    """The opening deposit predates the first trade, and bounds the same fetch."""
+    from config import settings
+    from degiro_explorer import fetch, store
+
+    monkeypatch.setattr(settings, "start_year", None)
+    with store.connection() as conn:
+        store.save_transactions(conn, [{"id": 1, "date": "2026-01-15 10:00:00+01:00", "product_id": 10, "quantity": 1}])
+        store.save_cash_movements(
+            conn,
+            [
+                {
+                    "id": 1,
+                    "date": "2025-12-20 09:00:00+01:00",
+                    "type": "CASH_TRANSACTION",
+                    "description": "Depositos",
+                    "currency": "EUR",
+                    "change": 5000.0,
+                }
+            ],
+        )
+    # Must be 2025 (the deposit), not 2026 (the first trade), or that cash is lost.
+    assert fetch.resolve_start_year() == 2025
+
+
 def test_resolve_start_year_falls_back_on_empty_db(tmp_db, monkeypatch):
     from config import settings
     from degiro_explorer import fetch

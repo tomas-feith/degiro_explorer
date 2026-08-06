@@ -161,7 +161,7 @@ def crosscheck_holdings() -> pd.DataFrame:
                 "app": round(app_value, 2),
                 "official": round(float(line["official"]), 2),
                 "delta": round(delta, 2),
-                "match": "✓" if abs(delta) <= MATCH_TOLERANCE else "⚠",
+                "match": "✓" if abs(round(delta, 2)) <= MATCH_TOLERANCE else "⚠",
             }
         )
     return pd.DataFrame(rows).sort_values("official", ascending=False)
@@ -174,5 +174,5 @@ def _row(label: str, app_value: float, official: float) -> dict:
         "app": round(app_value, 2),
         "official": round(official, 2),
         "delta": round(delta, 2),
-        "match": "✓" if abs(delta) <= MATCH_TOLERANCE else "⚠",
+        "match": "✓" if abs(round(delta, 2)) <= MATCH_TOLERANCE else "⚠",
     }

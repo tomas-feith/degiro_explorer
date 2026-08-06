@@ -32,19 +32,28 @@ DEFAULT_START_YEAR = 2013
 def resolve_start_year() -> int:
     """Earliest year worth pulling: explicit setting, else the stored history.
 
-    A fresh database has no transactions to learn from, so it falls back to
-    DEFAULT_START_YEAR and does the one wide scan that discovers the account's real
-    start; every later sync then narrows to that.
+    Spans BOTH transactions and cash movements: the same year bounds both fetches, and
+    the opening deposit necessarily lands before the first purchase, so deriving this
+    from transactions alone would silently drop cash history from an earlier year and
+    break the cash reconstruction.
+
+    A fresh database has nothing to learn from, so it falls back to DEFAULT_START_YEAR
+    and does the one wide scan that discovers the account's real start; every later sync
+    then narrows to that.
     """
     if settings.start_year:
         return int(settings.start_year)
-    tx = store.read_df("transactions")
-    if tx.empty:
-        return DEFAULT_START_YEAR
-    earliest = pd.to_datetime(tx["date"], utc=True, format="mixed").min()
-    if pd.isna(earliest):
-        return DEFAULT_START_YEAR
-    return int(earliest.year)
+    years = []
+    for table in ("transactions", "cash_movements"):
+        df = store.read_df(table)
+        if df.empty or "date" not in df:
+            continue
+        # tz-aware -> UTC: only ever shifts a boundary date EARLIER, never later, so at
+        # worst this costs one extra empty year rather than missing data.
+        earliest = pd.to_datetime(df["date"], utc=True, format="mixed", errors="coerce").min()
+        if pd.notna(earliest):
+            years.append(int(earliest.year))
+    return min(years) if years else DEFAULT_START_YEAR
 
 
 def _year_ranges(start_year: int, end: date) -> list[tuple[date, date]]:
