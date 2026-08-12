@@ -59,9 +59,22 @@ def main() -> None:
         st.warning("No database yet. Run `python scripts/sync.py` first.")
         return
 
-    with store.connection() as conn:
-        base = store.get_meta(conn, "base_currency", "EUR")
-        last_sync = store.get_meta(conn, "last_sync", "never")
+    try:
+        with store.connection() as conn:
+            base = store.get_meta(conn, "base_currency", "EUR")
+            last_sync = store.get_meta(conn, "last_sync", "never")
+    except Exception as exc:
+        # The file exists but is not usable: a schema older than the current
+        # migrations, a half-written DB from an interrupted sync, or another
+        # process holding it locked.
+        st.error(f"**Could not read the database.**\n\n`{type(exc).__name__}: {exc}`")
+        st.info(
+            f"`{settings.db_file}` exists but could not be opened. If a sync was "
+            "interrupted, re-run `python scripts/sync.py --offline` to rebuild the "
+            "derived tables; if the schema predates the current migrations, delete "
+            "the file and run a full sync."
+        )
+        return
     st.caption(f"Base currency: **{base}** · Last sync: **{last_sync}**")
 
     with st.expander("📖 Glossary — what the abbreviations mean"):
@@ -80,7 +93,18 @@ def main() -> None:
             "- **Peildatum** — the Box 3 reference date (1 January) on which your asset value is measured."
         )
 
-    data = _load()
+    try:
+        data = _load()
+    except Exception as exc:
+        # _load fans out over every analytics function; one failing table should
+        # name itself rather than dropping a traceback into the middle of the page.
+        st.error(f"**Could not derive the dashboard data.**\n\n`{type(exc).__name__}: {exc}`")
+        st.info(
+            "Re-run `python scripts/sync.py --offline` to rebuild the derived tables "
+            "from stored data (no DEGIRO login needed). If that fails too, the raw "
+            "tables are the problem and a full sync is required."
+        )
+        return
     if data["daily"].empty:
         st.error("No reconstructed data. Check the sync logs for unresolved tickers.")
         return
