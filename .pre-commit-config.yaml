@@ -1,32 +1,61 @@
 # Pre-commit hooks for DEGIRO Explorer.
-# Install once:  uv run pre-commit install   (wires both pre-commit and pre-push)
+# Install once (wires both pre-commit and pre-push):  uv run pre-commit install
 # Run manually:  uv run pre-commit run --all-files
+#
+# ruff / mypy / pytest run through `uv run --no-sync` so they use the exact
+# versions pinned in uv.lock -- the same ones CI uses. A separately-pinned
+# ruff-pre-commit / mirrors-mypy rev drifts from the dev-group pins and starts
+# disagreeing with CI (and mirrors-mypy needed its own copy of the runtime deps
+# just to resolve imports).
 default_install_hook_types: [pre-commit, pre-push]
-repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.1
-    hooks:
-      - id: ruff-check      # lint
-        args: [--fix]
-      - id: ruff-format     # format
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.3.0
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
     hooks:
-      - id: mypy
-        # Type-check the whole project (paths configured in pyproject.toml).
-        pass_filenames: false
-        args: []
-        additional_dependencies:
-          - pydantic-settings>=2.0
-          - types-PyYAML>=6.0
+      # .env holds real brokerage credentials; .gitignore is the only other
+      # guard. .gitleaks.toml allowlists the *.example templates.
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: detect-private-key
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=512"] # the SQLite DB and report CSVs stay out of git
 
   - repo: local
     hooks:
+      - id: ruff-check
+        name: ruff (lint)
+        entry: uv run --no-sync ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: ruff-format
+        name: ruff (format)
+        entry: uv run --no-sync ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: mypy
+        name: mypy
+        entry: uv run --no-sync mypy .
+        language: system
+        types: [python]
+        pass_filenames: false
+
       - id: pytest
         name: pytest
-        entry: uv run pytest
+        entry: uv run --no-sync python -m pytest
         language: system
-        pass_filenames: false
         types: [python]
+        pass_filenames: false
         stages: [pre-push]

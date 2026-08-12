@@ -223,20 +223,40 @@ def contributions_vs_growth() -> pd.DataFrame:
     )
 
 
+# Trading days per year -- the basis both annualisations below use.
+TRADING_DAYS_PER_YEAR = 252
+
+
 def risk_metrics() -> dict:
-    """Portfolio risk from deposit-proof daily TWR returns (annualised)."""
+    """Portfolio risk from deposit-proof daily TWR returns (annualised).
+
+    Non-trading days are excluded first. The reconstruction calendar is every
+    calendar day (``reconstruct._calendar`` uses ``freq="D"``), so weekend rows
+    carry a forward-filled price and a return of exactly zero. Annualising that
+    series with 252 mixes a calendar-day sample with a trading-day constant:
+    against a simulation with a known 18% volatility and 7.8% return, it
+    reported 15.2% and 5.4% -- volatility 16% low and the annualised return 31%
+    low, both of which then feed Sharpe. Dropping the weekend zeros brings the
+    same simulation back to 17.9% and 7.6%.
+    """
     df = daily_value()
     if df.empty or len(df) < 3:
         return {}
-    daily_ret = _twr_factors(df) - 1
-    daily_ret = daily_ret.iloc[1:]  # drop the forced day-0 = 0
-    vol = float(daily_ret.std() * np.sqrt(252) * 100)
-    mean_ann = float(daily_ret.mean() * 252 * 100)
+    daily_ret = (_twr_factors(df) - 1).iloc[1:]  # drop the forced day-0 = 0
+    daily_ret = daily_ret[(df["date"].dt.dayofweek < 5).iloc[1:]]
+    if len(daily_ret) < 2:
+        return {}
+    vol = float(daily_ret.std() * np.sqrt(TRADING_DAYS_PER_YEAR) * 100)
+    mean_ann = float(daily_ret.mean() * TRADING_DAYS_PER_YEAR * 100)
     # Sharpe is the EXCESS return per unit of volatility. The risk-free rate is
     # configurable (DEGIRO_RISK_FREE_PCT); with EUR short rates well above zero,
     # leaving it at 0 overstates the ratio.
     rf = float(settings.risk_free_pct)
-    sharpe = ((mean_ann - rf) / vol) if vol else 0.0
+    # Guard on a tolerance rather than `if vol`: a portfolio that has not moved
+    # leaves floating-point noise (~1e-15) instead of an exact zero, and dividing
+    # by that produced a ~1e13 Sharpe on the dashboard. Undefined, so report nan
+    # -- the metric genuinely has no value without volatility.
+    sharpe = ((mean_ann - rf) / vol) if vol > 1e-9 else float("nan")
     max_dd = float(drawdown_series()["drawdown_pct"].min())
     return {
         "volatility_pct": vol,
@@ -245,6 +265,9 @@ def risk_metrics() -> dict:
         "risk_free_pct": rf,
         "max_drawdown_pct": max_dd,
         "days": int(len(df)),
+        # How many observations vol/return were actually measured on, as opposed
+        # to the calendar span in "days".
+        "trading_days": int(len(daily_ret)),
     }
 
 
@@ -497,7 +520,7 @@ def realized_gains() -> pd.DataFrame:
     """
     tx = store.read_df("transactions")
     if tx.empty or (tx["quantity"] < 0).sum() == 0:
-        return pd.DataFrame(columns=["date", "name", "quantity", "proceeds", "cost", "gain"])
+        return pd.DataFrame(columns=["date", "name", "quantity", "proceeds", "cost", "gain", "unmatched_quantity"])
 
     tx = tx.copy()
     tx["date"] = pd.to_datetime(tx["date"], utc=True).dt.tz_localize(None)
@@ -516,7 +539,6 @@ def realized_gains() -> pd.DataFrame:
             elif qty < 0:
                 sell_qty = -qty
                 proceeds = abs(float(t[cost_field]))
-                unit_proceeds = proceeds / sell_qty if sell_qty else 0.0
                 matched_cost = 0.0
                 remaining = sell_qty
                 while remaining > 1e-9 and lots:
@@ -532,9 +554,13 @@ def realized_gains() -> pd.DataFrame:
                         "date": t["date"].date().isoformat(),
                         "name": products.get(pid, str(pid)),
                         "quantity": sell_qty,
-                        "proceeds": unit_proceeds * sell_qty,
+                        "proceeds": proceeds,
                         "cost": matched_cost,
-                        "gain": unit_proceeds * sell_qty - matched_cost,
+                        "gain": proceeds - matched_cost,
+                        # >0 when the sale could not be matched to enough buy lots,
+                        # which means the transaction history does not reach back far
+                        # enough; the gain above is overstated by that many shares.
+                        "unmatched_quantity": remaining if remaining > 1e-9 else 0.0,
                     }
                 )
     return pd.DataFrame(rows)

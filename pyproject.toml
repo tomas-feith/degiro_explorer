@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Fetch, reconstruct and explore your DEGIRO portfolio history in a Streamlit dashboard."
 readme = "README.md"
 requires-python = ">=3.14"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Tomás Feith" }]
 dependencies = [
     "degiro-connector[qrcode]>=3.0.36",
     "yfinance>=1.5.2",
@@ -72,7 +74,7 @@ omit = ["dashboard/*"] # Streamlit UI: exercised by running it, not by unit test
 [tool.coverage.report]
 # A ratchet, not an aspiration: currently ~43%, so this only catches regressions.
 # Raise it as tests land rather than picking a number the suite cannot honestly meet.
-fail_under = 40
+fail_under = 43
 show_missing = true
 exclude_also = [
     "if __name__ == .__main__.:",

@@ -223,7 +223,8 @@ def main() -> None:
             )
             r3.metric(
                 f"Sharpe (rf={risk['risk_free_pct']:.1f}%)",
-                f"{risk['sharpe']:.2f}",
+                # Undefined without volatility; don't render a bare "nan".
+                "—" if pd.isna(risk["sharpe"]) else f"{risk['sharpe']:.2f}",
                 help="Return earned per unit of volatility ((annualised return − "
                 "risk-free rate) ÷ volatility). A rough 'bang for your risk' "
                 "score: >1 is decent, <0 means you did worse than cash. The "
@@ -238,7 +239,8 @@ def main() -> None:
                 "a previous high before recovering.",
             )
             st.caption(
-                f"Annualised from ~{risk['days']} days of daily TWR returns — "
+                f"Annualised from {risk['trading_days']} trading days of daily TWR "
+                f"returns (out of {risk['days']} calendar days) — "
                 "**noisy over such a short history**; more meaningful with >1 year. "
                 "*Annualised* means scaled to a per-year figure; *TWR* (time-weighted "
                 "return) strips out the effect of your deposits and withdrawals so "
