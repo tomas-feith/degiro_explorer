@@ -22,11 +22,20 @@ updates:
       interval: weekly
     commit-message:
       prefix: deps
+    open-pull-requests-limit: 5
     groups:
       # Dev tooling moves fast (ruff especially) and a failure is a lint diff, not a
-      # data-correctness bug -- safe to batch. Runtime deps stay separate so a
-      # degiro-connector or yfinance bump gets reviewed on its own.
+      # data-correctness bug -- safe to batch.
       dev-tooling:
         dependency-type: development
+        patterns:
+          - "*"
+      # Runtime PATCH bumps batched too: high volume, low risk. Minor and major
+      # runtime bumps stay separate, because a degiro-connector or yfinance change
+      # can silently alter the numbers this dashboard reports.
+      runtime-patch:
+        dependency-type: production
+        update-types:
+          - patch
         patterns:
           - "*"
