@@ -54,12 +54,24 @@ select = [
 [tool.mypy]
 python_version = "3.14"
 files = ["config.py", "degiro_explorer", "scripts", "dashboard", "tests"]
-ignore_missing_imports = true
 warn_unused_ignores = false
 check_untyped_defs = true
 # Pragmatic settings for an app that wasn't written type-first: surface real
 # errors without demanding annotations on every function.
 disallow_untyped_defs = false
+
+# Named explicitly rather than a blanket ignore_missing_imports, so an import
+# that stops resolving is an error rather than being silently accepted.
+#
+# pandas is on this list reluctantly. Adding pandas-stubs was tried and backed
+# out: it surfaced 186 errors, 164 of them in reconstruct.py, almost all from
+# the stubs being strict about the scalar types that fall out of DataFrame and
+# Series indexing. Those are worth fixing, but it is its own piece of work
+# rather than a config change -- do it module by module, starting with
+# reconstruct.py, and drop pandas from this list when it is clean.
+[[tool.mypy.overrides]]
+module = ["degiro_connector.*", "pandas", "plotly.*", "yfinance"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
