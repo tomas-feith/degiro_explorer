@@ -396,12 +396,18 @@ def current_securities() -> pd.DataFrame:
 
 
 def holdings_classification() -> pd.DataFrame:
-    """Current holdings enriched with category / region / theme / TER from metadata."""
+    """Current holdings enriched with asset class / category / region / theme / TER.
+
+    `asset_class` is a separate axis from `category` on purpose: a bond fund is still a
+    "core" holding with a "Global" mandate, so without it bonds are indistinguishable
+    from global equity in the allocation breakdowns.
+    """
     sec = current_securities()
     if sec.empty:
         return sec
     meta = _holdings_meta()
     sec = sec.copy()
+    sec["asset_class"] = sec["isin"].map(lambda i: meta.get(i, {}).get("asset_class", "unknown"))
     sec["category"] = sec["isin"].map(lambda i: meta.get(i, {}).get("category", "unclassified"))
     sec["region"] = sec["isin"].map(lambda i: meta.get(i, {}).get("region", "unknown"))
     sec["theme"] = sec["isin"].map(lambda i: meta.get(i, {}).get("theme", "unknown"))
@@ -564,6 +570,178 @@ def realized_gains() -> pd.DataFrame:
                     }
                 )
     return pd.DataFrame(rows)
+
+
+def _fifo_lots() -> tuple[list[dict], list[dict]]:
+    """Walk every transaction FIFO, keeping track of which buy lot fed which sale.
+
+    Returns (per_transaction_rows, lot_match_rows). Shared by transaction_pnl() and
+    lot_matches() so the two can never disagree about the matching.
+    """
+    tx = store.read_df("transactions")
+    if tx.empty:
+        return [], []
+
+    tx = tx.copy()
+    tx["date"] = pd.to_datetime(tx["date"], utc=True).dt.tz_localize(None)
+    cost_field = "total_plus_all_fees_in_base_currency"
+    tx[cost_field] = pd.to_numeric(tx[cost_field], errors="coerce").fillna(0.0)
+    tx["quantity"] = pd.to_numeric(tx["quantity"], errors="coerce").fillna(0.0)
+    names = store.read_df("products").set_index("id")["name"].to_dict()
+
+    # Live marks for the unrealized leg. Cash rows carry string ids; drop them.
+    pos = store.read_df("current_positions")
+    marks: dict[int, float] = {}
+    if not pos.empty:
+        numeric = pd.to_numeric(pos["product_id"], errors="coerce")
+        for pid, price in zip(numeric, pd.to_numeric(pos["price"], errors="coerce"), strict=False):
+            if pd.notna(pid) and pd.notna(price):
+                marks[int(pid)] = float(price)
+
+    per_tx: list[dict] = []
+    matches: list[dict] = []
+    for pid, grp in tx.sort_values("date").groupby("product_id"):
+        name = names.get(pid, str(pid))
+        lots: list[list] = []  # [tx_id, date, qty_remaining, unit_cost]
+        rows_by_tx: dict[object, dict] = {}
+        for _, t in grp.iterrows():
+            qty = float(t["quantity"])
+            if qty == 0:
+                continue
+            unit = abs(float(t[cost_field])) / abs(qty)
+            if qty > 0:
+                lots.append([t["id"], t["date"], qty, unit])
+                row = {
+                    "tx_id": t["id"],
+                    "date": t["date"].date().isoformat(),
+                    "side": "BUY",
+                    "name": name,
+                    "quantity": qty,
+                    "unit_price": unit,
+                    "cash_flow": -abs(float(t[cost_field])),
+                    "closed_quantity": 0.0,
+                    "open_quantity": qty,
+                    "realized": 0.0,
+                    "unrealized": 0.0,
+                }
+                rows_by_tx[t["id"]] = row
+                per_tx.append(row)
+                continue
+
+            sell_qty = -qty
+            proceeds = abs(float(t[cost_field]))
+            unit_px = proceeds / sell_qty
+            matched_cost = 0.0
+            remaining = sell_qty
+            while remaining > 1e-9 and lots:
+                lot = lots[0]
+                take = min(lot[2], remaining)
+                matches.append(
+                    {
+                        "sell_tx_id": t["id"],
+                        "sell_date": t["date"].date().isoformat(),
+                        "buy_tx_id": lot[0],
+                        "buy_date": lot[1].date().isoformat(),
+                        "name": name,
+                        "quantity": take,
+                        "buy_unit_price": lot[3],
+                        "sell_unit_price": unit_px,
+                        "gain": take * (unit_px - lot[3]),
+                        "holding_days": int((t["date"] - lot[1]).days),
+                    }
+                )
+                matched_cost += take * lot[3]
+                lot[2] -= take
+                remaining -= take
+                if lot[0] in rows_by_tx:
+                    rows_by_tx[lot[0]]["closed_quantity"] += take
+                    rows_by_tx[lot[0]]["open_quantity"] -= take
+                if lot[2] <= 1e-9:
+                    lots.pop(0)
+            per_tx.append(
+                {
+                    "tx_id": t["id"],
+                    "date": t["date"].date().isoformat(),
+                    "side": "SELL",
+                    "name": name,
+                    "quantity": sell_qty,
+                    "unit_price": unit_px,
+                    "cash_flow": proceeds,
+                    "closed_quantity": sell_qty,
+                    "open_quantity": 0.0,
+                    "realized": proceeds - matched_cost,
+                    "unrealized": 0.0,
+                    # >0 when the history does not reach back far enough to cover the
+                    # sale; the realized figure above is overstated by that many shares.
+                    "unmatched_quantity": remaining if remaining > 1e-9 else 0.0,
+                }
+            )
+
+        mark = marks.get(int(pid)) if isinstance(pid, int | float) else None
+        if mark is not None:
+            for lot in lots:
+                open_row = rows_by_tx.get(lot[0])
+                if open_row is not None:
+                    open_row["unrealized"] = lot[2] * (mark - lot[3])
+                    open_row["mark_price"] = mark
+
+    return per_tx, matches
+
+
+TRANSACTION_PNL_COLUMNS = [
+    "date",
+    "side",
+    "name",
+    "quantity",
+    "unit_price",
+    "cash_flow",
+    "closed_quantity",
+    "open_quantity",
+    "realized",
+    "unrealized",
+    "total_pnl",
+]
+
+
+def transaction_pnl() -> pd.DataFrame:
+    """P&L attributed to each individual transaction.
+
+    A BUY carries unrealized P&L on whatever of its lot is still held, and contributes
+    its cost basis to the sales that consumed it. A SELL carries the realized gain of
+    that disposal. Summing realized + unrealized over every row reconciles to portfolio
+    P/L less dividends and other cash credits.
+    """
+    per_tx, _ = _fifo_lots()
+    if not per_tx:
+        return pd.DataFrame(columns=[*TRANSACTION_PNL_COLUMNS, "tx_id"])
+
+    df = pd.DataFrame(per_tx)
+    for col in ("realized", "unrealized", "closed_quantity", "open_quantity"):
+        df[col] = pd.to_numeric(df.get(col), errors="coerce").fillna(0.0)
+    df["total_pnl"] = df["realized"] + df["unrealized"]
+    ordered = [*TRANSACTION_PNL_COLUMNS, "tx_id"]
+    extra = [c for c in df.columns if c not in ordered]
+    return df[[*ordered, *extra]].sort_values("date", ascending=False).reset_index(drop=True)
+
+
+def lot_matches() -> pd.DataFrame:
+    """One row per (sale, buy lot) pair: which purchase supplied which sold share."""
+    _, matches = _fifo_lots()
+    cols = [
+        "sell_date",
+        "buy_date",
+        "name",
+        "quantity",
+        "buy_unit_price",
+        "sell_unit_price",
+        "gain",
+        "holding_days",
+        "sell_tx_id",
+        "buy_tx_id",
+    ]
+    if not matches:
+        return pd.DataFrame(columns=cols)
+    return pd.DataFrame(matches)[cols].sort_values("sell_date", ascending=False).reset_index(drop=True)
 
 
 def reconstruction_delta(reconstructed_holdings: float) -> dict:

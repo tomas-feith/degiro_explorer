@@ -215,3 +215,97 @@ def test_selling_at_the_purchase_price_realises_no_gain(tmp_db, qty: float, pric
     row = analytics.realized_gains().iloc[0]
     assert row["gain"] == pytest.approx(0.0, abs=1e-6)
     assert row["unmatched_quantity"] == 0.0
+
+
+# --- per-transaction P&L attribution ---------------------------------------
+
+
+@settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    buys=st.lists(
+        st.tuples(
+            st.integers(min_value=1, max_value=20),
+            st.floats(min_value=1.0, max_value=100.0, allow_nan=False, allow_infinity=False),
+        ),
+        min_size=1,
+        max_size=5,
+    ),
+    sell_qty=st.integers(min_value=1, max_value=60),
+)
+def test_transaction_pnl_realised_total_matches_realized_gains(tmp_db, buys, sell_qty):
+    """The two reports share a matcher, so they must never disagree on the total."""
+    bought = sum(q for q, _ in buys)
+    assume(sell_qty <= bought)
+
+    rows = [_tx(i, f"2025-01-{i + 1:02d}", float(q), -float(q) * p) for i, (q, p) in enumerate(buys)]
+    rows.append(_tx(99, "2025-02-01", -float(sell_qty), float(sell_qty) * 50.0))
+    _seed_transactions(rows)
+
+    per_tx = analytics.transaction_pnl()
+    assert per_tx["realized"].sum() == pytest.approx(analytics.realized_gains()["gain"].sum())
+    assert analytics.lot_matches()["gain"].sum() == pytest.approx(per_tx["realized"].sum())
+
+
+@settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    buys=st.lists(
+        st.tuples(
+            st.integers(min_value=1, max_value=20),
+            st.floats(min_value=1.0, max_value=100.0, allow_nan=False, allow_infinity=False),
+        ),
+        min_size=1,
+        max_size=5,
+    ),
+    sell_qty=st.integers(min_value=1, max_value=60),
+)
+def test_every_bought_share_is_either_closed_or_still_held(tmp_db, buys, sell_qty):
+    """No share may be double-counted or lost between the closed and open columns.
+
+    This is the invariant that makes a buy row's unrealised figure trustworthy: it is
+    priced on `open_quantity`, so a lot that over-reports what it still holds would
+    silently inflate portfolio P/L.
+    """
+    bought = sum(q for q, _ in buys)
+    assume(sell_qty <= bought)
+
+    rows = [_tx(i, f"2025-01-{i + 1:02d}", float(q), -float(q) * p) for i, (q, p) in enumerate(buys)]
+    rows.append(_tx(99, "2025-02-01", -float(sell_qty), float(sell_qty) * 50.0))
+    _seed_transactions(rows)
+
+    per_tx = analytics.transaction_pnl()
+    buy_rows = per_tx[per_tx["side"] == "BUY"]
+    split = buy_rows["closed_quantity"] + buy_rows["open_quantity"]
+    assert (split - buy_rows["quantity"]).abs().max() < 1e-6
+    assert (buy_rows["closed_quantity"] >= -1e-9).all()
+    assert (buy_rows["open_quantity"] >= -1e-9).all()
+    # FIFO closes the oldest lots first, so the total closed equals what was sold.
+    assert buy_rows["closed_quantity"].sum() == pytest.approx(float(sell_qty))
+
+    sells = per_tx[per_tx["side"] == "SELL"]
+    assert (sells["open_quantity"] == 0).all()
+    assert (sells["unrealized"] == 0).all()
+
+
+@settings(max_examples=30, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    qty=st.integers(min_value=1, max_value=50),
+    price=st.floats(min_value=1.0, max_value=100.0, allow_nan=False, allow_infinity=False),
+)
+def test_lot_matches_never_predate_their_purchase(tmp_db, qty: int, price: float):
+    """A sale can only consume lots bought on or before it, so holding days are >= 0."""
+    _seed_transactions(
+        [
+            _tx(1, "2025-01-01", float(qty), -qty * price),
+            _tx(2, "2025-03-01", -float(qty), qty * price),
+        ]
+    )
+    lm = analytics.lot_matches()
+    assert not lm.empty
+    assert (lm["holding_days"] >= 0).all()
+    assert (lm["buy_date"] <= lm["sell_date"]).all()
+    assert lm["quantity"].sum() == pytest.approx(float(qty))
+
+
+def test_transaction_pnl_is_empty_without_transactions(tmp_db):
+    assert analytics.transaction_pnl().empty
+    assert analytics.lot_matches().empty

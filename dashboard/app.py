@@ -38,6 +38,8 @@ def _load():
         "performance_curves": analytics.performance_curves(),
         "box3_reference": analytics.box3_reference_values(),
         "realized_gains": analytics.realized_gains(),
+        "transaction_pnl": analytics.transaction_pnl(),
+        "lot_matches": analytics.lot_matches(),
         "crosscheck": reports.crosscheck(),
         "crosscheck_holdings": reports.crosscheck_holdings(),
         "classification": analytics.holdings_classification(),
@@ -323,6 +325,52 @@ def main() -> None:
                 tx = tx[mask]
             st.dataframe(tx, use_container_width=True, hide_index=True)
 
+        st.subheader("P&L per transaction")
+        tpnl = data["transaction_pnl"]
+        if tpnl.empty:
+            st.info("No transactions.")
+        else:
+            st.caption(
+                "FIFO-matched. A buy carries unrealised P/L on the part of its lot still "
+                "held; a sell carries the realised gain of that disposal. Both legs are "
+                "net of transaction fees."
+            )
+            money = st.column_config.NumberColumn(format="%.2f")
+            st.dataframe(
+                tpnl[analytics.TRANSACTION_PNL_COLUMNS],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "unit_price": st.column_config.NumberColumn(f"Unit price ({base})", format="%.4f"),
+                    "cash_flow": st.column_config.NumberColumn(f"Cash flow ({base})", format="%.2f"),
+                    "closed_quantity": st.column_config.NumberColumn("Closed qty", format="%.2f"),
+                    "open_quantity": st.column_config.NumberColumn("Still held", format="%.2f"),
+                    "realized": st.column_config.NumberColumn(f"Realised ({base})", format="%.2f"),
+                    "unrealized": st.column_config.NumberColumn(f"Unrealised ({base})", format="%.2f"),
+                    "total_pnl": st.column_config.NumberColumn(f"Total P/L ({base})", format="%.2f"),
+                    "quantity": money,
+                },
+            )
+            m1, m2, m3 = st.columns(3)
+            m1.metric(f"Realised ({base})", f"{tpnl['realized'].sum():,.2f}")
+            m2.metric(f"Unrealised ({base})", f"{tpnl['unrealized'].sum():,.2f}")
+            m3.metric(f"Combined ({base})", f"{tpnl['total_pnl'].sum():,.2f}")
+
+            lm = data["lot_matches"]
+            if not lm.empty:
+                with st.expander("Which purchase supplied each sold share (FIFO lot matches)"):
+                    st.dataframe(
+                        lm.drop(columns=["sell_tx_id", "buy_tx_id"]),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "buy_unit_price": st.column_config.NumberColumn(f"Buy price ({base})", format="%.4f"),
+                            "sell_unit_price": st.column_config.NumberColumn(f"Sell price ({base})", format="%.4f"),
+                            "gain": st.column_config.NumberColumn(f"Gain ({base})", format="%.2f"),
+                            "holding_days": st.column_config.NumberColumn("Held (days)", format="%d"),
+                        },
+                    )
+
         st.divider()
         c1, c2 = st.columns(2)
         with c1:
@@ -447,26 +495,32 @@ def _holdings_detail(data, base):
         return
 
     st.subheader("Allocation breakdown")
-    a1, a2, a3 = st.columns(3)
+    a1, a2, a3, a4 = st.columns(4)
     with a1:
+        by_asset = cls.groupby("asset_class", as_index=False)["value"].sum()
+        st.plotly_chart(
+            px.pie(by_asset, names="asset_class", values="value", title="By asset class", hole=0.4),
+            use_container_width=True,
+        )
+    with a2:
         by_cat = cls.groupby("category", as_index=False)["value"].sum()
         st.plotly_chart(
             px.pie(by_cat, names="category", values="value", title="Core vs satellite", hole=0.4),
             use_container_width=True,
         )
-    with a2:
+    with a3:
         by_region = cls.groupby("region", as_index=False)["value"].sum()
         st.plotly_chart(
             px.pie(by_region, names="region", values="value", title="By region", hole=0.4), use_container_width=True
         )
-    with a3:
+    with a4:
         st.plotly_chart(
             px.pie(cls, names="theme", values="value", title="By theme", hole=0.4), use_container_width=True
         )
     st.caption(
         "Classification from holdings_meta.yml — edit that file to reclassify. "
-        "Region reflects each fund's mandate (S&P 500 = US, MSCI Europe = Europe; "
-        "thematic funds are global)."
+        "Asset class separates bonds from equity; region reflects each fund's mandate "
+        "(S&P 500 = US, MSCI Europe = Europe; thematic funds are global)."
     )
 
     st.subheader("Costs — Total Expense Ratio (TER)")
@@ -525,6 +579,9 @@ def _data_tab(data, base):
     _download(e1, "Daily value history", analytics.daily_value(), "degiro_daily_value.csv")
     _download(e2, "Current holdings", data["holdings"], "degiro_holdings.csv")
     _download(e3, "Transactions", data["transactions"], "degiro_transactions.csv")
+    e4, e5, _ = st.columns(3)
+    _download(e4, "P&L per transaction", data["transaction_pnl"], "degiro_transaction_pnl.csv")
+    _download(e5, "FIFO lot matches", data["lot_matches"], "degiro_lot_matches.csv")
 
 
 def _resolve_unresolved(products):
