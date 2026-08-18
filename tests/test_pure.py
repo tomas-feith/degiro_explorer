@@ -94,6 +94,41 @@ def test_holdings_classification_defaults_unknown_asset_class(monkeypatch):
     assert pd.isna(df["ter"].iloc[0])
 
 
+def test_benchmark_curves_ignores_deconfigured_tickers(monkeypatch):
+    """benchmark_prices keeps rows for every ticker ever configured, so a benchmark
+    removed from tickers.yml must stop being plotted rather than linger as a curve."""
+    dates = pd.to_datetime(["2026-08-10", "2026-08-11", "2026-08-12"])
+    monkeypatch.setattr(analytics, "daily_value", lambda: pd.DataFrame({"date": dates, "total_value": [1.0, 2.0, 3.0]}))
+    monkeypatch.setattr(
+        analytics.store,
+        "read_df",
+        lambda table: pd.DataFrame(
+            {
+                "ticker": ["SPYI.DE"] * 3 + ["IWDA.AS"] * 3,
+                "date": list(dates) * 2,
+                "close": [100.0, 110.0, 121.0, 50.0, 55.0, 60.0],
+            }
+        ),
+    )
+    monkeypatch.setattr(analytics.prices, "load_benchmarks", lambda: ["SPYI.DE"])
+    curves = analytics.benchmark_curves()
+    assert set(curves["benchmark"]) == {"SPYI.DE"}  # the retired IWDA.AS rows are ignored
+    assert round(curves["return_pct"].iloc[-1], 2) == 21.0
+
+
+def test_benchmark_curves_empty_when_nothing_configured(monkeypatch):
+    """No configured benchmarks must yield an empty frame, not every stored ticker."""
+    dates = pd.to_datetime(["2026-08-10", "2026-08-11"])
+    monkeypatch.setattr(analytics, "daily_value", lambda: pd.DataFrame({"date": dates, "total_value": [1.0, 2.0]}))
+    monkeypatch.setattr(
+        analytics.store,
+        "read_df",
+        lambda table: pd.DataFrame({"ticker": ["IWDA.AS"] * 2, "date": list(dates), "close": [50.0, 55.0]}),
+    )
+    monkeypatch.setattr(analytics.prices, "load_benchmarks", lambda: [])
+    assert analytics.benchmark_curves().empty
+
+
 def test_to_float_locale_parsing():
     # comma decimals, NBSP/Â thousands separators, quoting
     assert reports._to_float("1096,87") == 1096.87

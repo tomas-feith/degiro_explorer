@@ -182,7 +182,14 @@ def benchmark_curves() -> pd.DataFrame:
     bench = store.read_df("benchmark_prices")
     if daily.empty or bench.empty:
         return pd.DataFrame(columns=["date", "benchmark", "return_pct"])
+    # tickers.yml is the source of truth: benchmark_prices keeps rows for any ticker ever
+    # configured, so without this filter a benchmark you removed keeps drawing its curve.
+    configured = set(prices.load_benchmarks())
+    bench = bench[bench["ticker"].isin(configured)]
+    if bench.empty:
+        return pd.DataFrame(columns=["date", "benchmark", "return_pct"])
     start, end = daily["date"].min(), daily["date"].max()
+    bench = bench.copy()
     bench["date"] = pd.to_datetime(bench["date"])
     out = []
     for ticker, grp in bench.groupby("ticker"):
