@@ -52,6 +52,48 @@ def test_drop_closed_removes_sold_out_positions():
     assert sorted(kept["product_id"]) == [1, 3]
 
 
+def test_holdings_classification_separates_asset_class_from_category(monkeypatch):
+    """A bond fund is core/Global too, so asset_class must be its own axis or bonds
+    are indistinguishable from global equity in the allocation breakdowns."""
+    monkeypatch.setattr(
+        analytics,
+        "current_securities",
+        lambda: pd.DataFrame(
+            [
+                {"isin": "IE00BDBRDM35", "name": "Global Agg Bond", "value": 2622.41, "weight": 30.0},
+                {"isin": "IE00BF4RFH31", "name": "World Small Cap", "value": 2256.17, "weight": 70.0},
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        analytics,
+        "_holdings_meta",
+        lambda: {
+            "IE00BDBRDM35": {"asset_class": "Bonds", "category": "core", "region": "Global", "ter": 0.10},
+            "IE00BF4RFH31": {"asset_class": "Equity", "category": "core", "region": "Global", "ter": 0.35},
+        },
+    )
+    df = analytics.holdings_classification()
+    # Both are "core" and "Global" -- only asset_class tells them apart.
+    assert set(df["category"]) == {"core"}
+    assert set(df["region"]) == {"Global"}
+    assert sorted(df["asset_class"]) == ["Bonds", "Equity"]
+
+
+def test_holdings_classification_defaults_unknown_asset_class(monkeypatch):
+    """An unmapped holding must fall back, not raise, so a new buy still renders."""
+    monkeypatch.setattr(
+        analytics,
+        "current_securities",
+        lambda: pd.DataFrame([{"isin": "IE00NEW", "name": "Unmapped", "value": 100.0, "weight": 100.0}]),
+    )
+    monkeypatch.setattr(analytics, "_holdings_meta", lambda: {})
+    df = analytics.holdings_classification()
+    assert df["asset_class"].iloc[0] == "unknown"
+    assert df["category"].iloc[0] == "unclassified"
+    assert pd.isna(df["ter"].iloc[0])
+
+
 def test_to_float_locale_parsing():
     # comma decimals, NBSP/Â thousands separators, quoting
     assert reports._to_float("1096,87") == 1096.87

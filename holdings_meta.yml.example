@@ -4,21 +4,32 @@
 # Per-holding classification for the Holdings tab (keyed by ISIN).
 # Editable — adjust if you reclassify or if a TER changes. TER is the fund's annual
 # expense ratio in percent. category: "core" (broad index) or "satellite" (thematic/bet).
+# asset_class ("Equity" / "Bonds") is a separate axis from category, so a core bond fund
+# is not lumped in with core equity in the allocation pies.
 
 # Example entries (replace with your own):
 meta:
   IE00B4L5Y983:   # iShares Core MSCI World UCITS ETF
+    asset_class: Equity
     category: core
     region: Global
     theme: Broad equity
     ter: 0.20
   IE00B5BMR087:   # iShares Core S&P 500 UCITS ETF (Acc)
+    asset_class: Equity
     category: core
     region: United States
     theme: Broad equity
     ter: 0.07
   IE00XXXXXXXX:    # Example thematic/satellite ETF
+    asset_class: Equity
     category: satellite
     region: Global
     theme: Thematic
     ter: 0.50
+  IE00YYYYYYYY:    # Example bond ETF
+    asset_class: Bonds
+    category: core
+    region: Global
+    theme: Bonds
+    ter: 0.10
