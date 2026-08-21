@@ -1,6 +1,7 @@
 """Unit tests for pure helpers (no DB)."""
 
 import pandas as pd
+import pytest
 
 from degiro_explorer import analytics, prices, reports
 
@@ -210,3 +211,156 @@ def test_resolve_start_year_setting_wins(tmp_db, monkeypatch):
 
     monkeypatch.setattr(settings, "start_year", 2020)
     assert fetch.resolve_start_year() == 2020
+
+
+def test_position_performance_uses_average_cost_of_shares_still_held(tmp_db):
+    """A partly sold-down holding must not net sale proceeds against its cost basis.
+
+    Netting made IQQY read +45% (basis EUR 1,999 vs EUR 2,908 of value) when the app
+    showed +5%: the realised gain had been subtracted from the cost of the shares still
+    held. The basis is the moving-average cost of the remaining shares, DEGIRO-style.
+    """
+    from degiro_explorer import analytics, store
+
+    def tx(tid: int, day: str, qty: float, total: float) -> dict:
+        return {
+            "id": tid,
+            "date": f"2026-{day}T08:00:00+02:00",
+            "product_id": 7,
+            "buysell": "B" if qty > 0 else "S",
+            "quantity": qty,
+            "price": abs(total / qty),
+            "total": total,
+            "total_in_base_currency": total,
+            "total_plus_all_fees_in_base_currency": total,
+            "fee_in_base_currency": 0.0,
+        }
+
+    with store.connection() as conn:
+        store.save_products(conn, {7: {"isin": "IE00B1YZSC51", "symbol": "IQQY", "name": "Europe", "currency": "EUR"}})
+        store.save_transactions(
+            conn,
+            [
+                tx(1, "04-07", 100.0, -3700.0),  # avg cost 38.50 over the two buys
+                tx(2, "06-25", 100.0, -4000.0),
+                tx(3, "08-18", -150.0, 6300.0),  # sold at 42.00 -> realised, basis untouched
+            ],
+        )
+        store.save_position_values(conn, [("2026-08-21", 7, 2100.0)])  # 50 shares @ 42.00
+
+    row = analytics.position_performance().iloc[0]
+    assert row["cost"] == pytest.approx(50 * 38.50)
+    assert row["pnl"] == pytest.approx(2100.0 - 1925.0)
+    assert row["return_pct"] == pytest.approx((42.0 / 38.50 - 1) * 100)
+
+
+def test_position_performance_drops_a_fully_closed_holding(tmp_db):
+    from degiro_explorer import analytics, store
+
+    with store.connection() as conn:
+        store.save_products(conn, {7: {"isin": "X", "symbol": "X", "name": "Gone", "currency": "EUR"}})
+        store.save_transactions(
+            conn,
+            [
+                {
+                    "id": 1,
+                    "date": "2026-04-07T08:00:00+02:00",
+                    "product_id": 7,
+                    "buysell": "B",
+                    "quantity": 10.0,
+                    "price": 10.0,
+                    "total": -100.0,
+                    "total_in_base_currency": -100.0,
+                    "total_plus_all_fees_in_base_currency": -100.0,
+                    "fee_in_base_currency": 0.0,
+                },
+                {
+                    "id": 2,
+                    "date": "2026-05-07T08:00:00+02:00",
+                    "product_id": 7,
+                    "buysell": "S",
+                    "quantity": -10.0,
+                    "price": 12.0,
+                    "total": 120.0,
+                    "total_in_base_currency": 120.0,
+                    "total_plus_all_fees_in_base_currency": 120.0,
+                    "fee_in_base_currency": 0.0,
+                },
+            ],
+        )
+        store.save_position_values(conn, [("2026-08-21", 7, 0.0)])
+
+    assert analytics.position_performance().empty
+
+
+def test_pnl_reconciliation_bridges_the_transaction_ledger_to_total_pnl(tmp_db):
+    """Total P/L exceeds realised + unrealised by exactly the non-trade cash income.
+
+    Dividends and rebates never touch a transaction row, so the Transactions tab's
+    Combined figure is legitimately below the Overview's Total P/L; the bridge must
+    account for the gap rather than leave it looking like a mismatch.
+    """
+    from degiro_explorer import analytics, store
+
+    with store.connection() as conn:
+        store.save_products(conn, {7: {"isin": "X", "symbol": "X", "name": "Fund", "currency": "EUR"}})
+        store.save_transactions(
+            conn,
+            [
+                {
+                    "id": 1,
+                    "date": "2026-04-07T08:00:00+02:00",
+                    "product_id": 7,
+                    "buysell": "B",
+                    "quantity": 100.0,
+                    "price": 10.0,
+                    "total": -1000.0,
+                    "total_in_base_currency": -1000.0,
+                    "total_plus_all_fees_in_base_currency": -1000.0,
+                    "fee_in_base_currency": 0.0,
+                },
+            ],
+        )
+        store.save_cash_movements(
+            conn,
+            [
+                {
+                    "id": 1,
+                    "date": "2026-06-10T09:00:00+02:00",
+                    "type": "CASH_TRANSACTION",
+                    "description": "Dividendo",
+                    "currency": "EUR",
+                    "change": 20.0,
+                },
+                {
+                    "id": 2,
+                    "date": "2026-06-11T09:00:00+02:00",
+                    "type": "CASH_TRANSACTION",
+                    "description": "DEGIRO Rebate Promotion",
+                    "currency": "EUR",
+                    "change": 5.0,
+                },
+            ],
+        )
+        store.save_current_positions(conn, [{"product_id": 7, "size": 100.0, "price": 11.0, "value": 1100.0}])
+        store.save_daily_value(
+            conn,
+            pd.DataFrame(
+                [
+                    {
+                        "date": "2026-08-21",
+                        "holdings_value": 1100.0,
+                        "cash": 25.0,
+                        "total_value": 1125.0,
+                        "net_invested": 1000.0,
+                    }
+                ]
+            ),
+        )
+
+    rec = analytics.pnl_reconciliation()
+    assert rec["total_pnl"] == pytest.approx(125.0)
+    assert rec["realized"] == pytest.approx(0.0)
+    assert rec["unrealized"] == pytest.approx(100.0)  # 100 shares marked 10 -> 11
+    assert rec["dividends"] == pytest.approx(20.0)
+    assert rec["other"] == pytest.approx(5.0)  # the rebate, not a silent residual

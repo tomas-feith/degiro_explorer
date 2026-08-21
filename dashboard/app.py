@@ -39,6 +39,7 @@ def _load():
         "box3_reference": analytics.box3_reference_values(),
         "realized_gains": analytics.realized_gains(),
         "transaction_pnl": analytics.transaction_pnl(),
+        "pnl_reconciliation": analytics.pnl_reconciliation(),
         "lot_matches": analytics.lot_matches(),
         "crosscheck": reports.crosscheck(),
         "crosscheck_holdings": reports.crosscheck_holdings(),
@@ -355,6 +356,16 @@ def main() -> None:
             m1.metric(f"Realised ({base})", f"{tpnl['realized'].sum():,.2f}")
             m2.metric(f"Unrealised ({base})", f"{tpnl['unrealized'].sum():,.2f}")
             m3.metric(f"Combined ({base})", f"{tpnl['total_pnl'].sum():,.2f}")
+
+            rec = data["pnl_reconciliation"]
+            if rec:
+                st.caption(
+                    f"Bridge to the Overview's Total P/L: realised {rec['realized']:,.2f} "
+                    f"+ unrealised {rec['unrealized']:,.2f} + dividends {rec['dividends']:,.2f} "
+                    f"+ other cash credits {rec['other']:,.2f} = {rec['total_pnl']:,.2f} {base}. "
+                    "Dividends, interest and rebates are cash movements rather than trades, so "
+                    "they cannot be attributed to a transaction row and sit outside this table."
+                )
 
             lm = data["lot_matches"]
             if not lm.empty:

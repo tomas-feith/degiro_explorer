@@ -93,10 +93,16 @@ def position_return_history() -> pd.DataFrame:
 
 
 def position_performance() -> pd.DataFrame:
-    """Per-holding return: current value vs cost basis (both in base currency).
+    """Per-holding return: current value vs the cost basis of the shares STILL held.
 
     Currency-safe because it uses DEGIRO's base-currency totals (incl. fees) for cost
     and the reconstructed/pinned current value. Returns one row per current holding.
+
+    The basis is the moving-average cost of the shares still held (see _open_lot_cost),
+    NOT purchases netted against sale proceeds: netting subtracts realised gains from the
+    cost of a partly sold-down holding and blows the return up (IQQY read +45% instead of
+    +5%). This figure is unrealised-only and tracks DEGIRO's break-even price; realised
+    gains live in realized_gains() / transaction_pnl().
     """
     hist = store.read_df("daily_position_value")
     tx = store.read_df("transactions")
@@ -106,10 +112,7 @@ def position_performance() -> pd.DataFrame:
     hist["date"] = pd.to_datetime(hist["date"])
     latest = hist.sort_values("date").groupby("product_id").tail(1).set_index("product_id")["value"]
 
-    # Cost basis: net of all buys/sells in base currency (buys negative -> negate).
-    cost_field = "total_plus_all_fees_in_base_currency"
-    tx[cost_field] = pd.to_numeric(tx[cost_field], errors="coerce").fillna(0.0)
-    cost = -tx.groupby("product_id")[cost_field].sum()
+    cost = _open_lot_cost()
 
     products = store.read_df("products").set_index("id")
     rows = []
@@ -311,6 +314,36 @@ def dividends() -> pd.DataFrame:
         return pd.DataFrame(columns=["month", "amount", "currency"])
     div = div.assign(month=div["date"].dt.to_period("M").astype(str))
     return div.groupby(["month", "currency"], as_index=False)["change"].sum().rename(columns={"change": "amount"})
+
+
+def pnl_reconciliation() -> dict:
+    """Bridge the per-transaction P&L ledger to the headline Total P/L.
+
+    They are NOT expected to be equal. The ledger can only carry P&L that belongs to a
+    trade; dividends, interest and rebates are cash movements against the account, so
+    they sit outside it by construction. Without this bridge the Overview's Total P/L
+    reads higher than the Transactions tab's Combined and looks like a bug.
+
+    `other` is the residual, so the bridge always closes -- anything unexplained (FX on
+    a non-base-currency dividend, an unclassified credit) surfaces there rather than
+    silently splitting the two numbers.
+    """
+    kpi = summary_kpis()
+    if not kpi:
+        return {}
+    per_tx = transaction_pnl()
+    realized = float(per_tx["realized"].sum()) if not per_tx.empty else 0.0
+    unrealized = float(per_tx["unrealized"].sum()) if not per_tx.empty else 0.0
+    div = dividends()
+    div_total = float(div["amount"].sum()) if not div.empty else 0.0
+    total = float(kpi["total_pnl"])
+    return {
+        "realized": realized,
+        "unrealized": unrealized,
+        "dividends": div_total,
+        "other": total - realized - unrealized - div_total,
+        "total_pnl": total,
+    }
 
 
 def fees() -> pd.DataFrame:
@@ -579,6 +612,43 @@ def realized_gains() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _open_lot_cost() -> dict[object, float]:
+    """Cost basis of the shares still held, per product, on a MOVING-AVERAGE basis.
+
+    Deliberately not FIFO: this feeds the per-holding return, which is read side by side
+    with the DEGIRO app, and DEGIRO prices a position off a running average cost
+    (its `breakEvenPrice`). A buy adds its full base-currency cost (fees included, which
+    is why this sits a cent or two above DEGIRO's fee-free break-even); a sell removes
+    quantity at the running average, leaving the average untouched. FIFO stays the basis
+    for realized_gains(), transaction_pnl() and the tax tab.
+    """
+    tx = store.read_df("transactions")
+    if tx.empty:
+        return {}
+    tx = tx.copy()
+    tx["date"] = pd.to_datetime(tx["date"], utc=True).dt.tz_localize(None)
+    cost_field = "total_plus_all_fees_in_base_currency"
+    tx[cost_field] = pd.to_numeric(tx[cost_field], errors="coerce").fillna(0.0)
+    tx["quantity"] = pd.to_numeric(tx["quantity"], errors="coerce").fillna(0.0)
+
+    out: dict[object, float] = {}
+    for pid, grp in tx.sort_values("date").groupby("product_id"):
+        qty = 0.0
+        cost = 0.0
+        for _, t in grp.iterrows():
+            q = float(t["quantity"])
+            if q > 0:
+                qty += q
+                cost += abs(float(t[cost_field]))
+            elif q < 0:
+                sold = min(-q, qty)  # a sale beyond known history cannot go negative
+                avg = cost / qty if qty > 1e-9 else 0.0
+                cost -= sold * avg
+                qty -= sold
+        out[pid] = cost if qty > 1e-9 else 0.0
+    return out
+
+
 def _fifo_lots() -> tuple[list[dict], list[dict]]:
     """Walk every transaction FIFO, keeping track of which buy lot fed which sale.
 
@@ -620,6 +690,7 @@ def _fifo_lots() -> tuple[list[dict], list[dict]]:
                 lots.append([t["id"], t["date"], qty, unit])
                 row = {
                     "tx_id": t["id"],
+                    "product_id": pid,
                     "date": t["date"].date().isoformat(),
                     "side": "BUY",
                     "name": name,
@@ -668,6 +739,7 @@ def _fifo_lots() -> tuple[list[dict], list[dict]]:
             per_tx.append(
                 {
                     "tx_id": t["id"],
+                    "product_id": pid,
                     "date": t["date"].date().isoformat(),
                     "side": "SELL",
                     "name": name,
