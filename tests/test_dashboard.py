@@ -9,6 +9,8 @@ key or a deprecated widget argument fails here instead of in the browser. It cau
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -16,7 +18,11 @@ from degiro_explorer import store
 
 pytest.importorskip("streamlit.testing.v1")
 
-APP = "dashboard/app.py"
+# Absolute, NOT "dashboard/app.py": AppTest.from_file resolves a relative path against
+# the file that calls it (so pytest would look for tests/dashboard/app.py). Streamlit
+# 1.60 happened to resolve it against the cwd instead, which hid this locally and only
+# failed in CI on the 1.61 bump.
+APP = str(Path(__file__).resolve().parent.parent / "dashboard" / "app.py")
 
 
 def _seed() -> None:
