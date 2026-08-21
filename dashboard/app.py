@@ -7,6 +7,7 @@ Run with:  streamlit run dashboard/app.py
 from __future__ import annotations
 
 import sys
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -18,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from config import settings  # noqa: E402
-from degiro_explorer import analytics, reports, store  # noqa: E402
+from degiro_explorer import analytics, report_html, reports, store  # noqa: E402
 
 st.set_page_config(page_title="DEGIRO Explorer", page_icon="📈", layout="wide")
 
@@ -137,6 +138,25 @@ def main() -> None:
             help="Profit / Loss — current value minus money invested.",
         )
         c4.metric("Total return", f"{k.get('total_return_pct', 0):,.1f}%")
+
+        # Built on click, not on every rerun: it is a full second pass over the data and
+        # most page loads never touch it. st.download_button needs the bytes up front, so
+        # the work sits behind an explicit "prepare" toggle.
+        st.divider()
+        r1, r2 = st.columns([1, 3])
+        if r1.button("🧾 Prepare HTML report", help="A standalone snapshot you can save, print or email."):
+            st.session_state["report_html"] = report_html.build_report(data, base)
+        if st.session_state.get("report_html"):
+            r2.download_button(
+                "⬇ Download HTML report",
+                st.session_state["report_html"].encode("utf-8"),
+                file_name=f"degiro_report_{date.today().isoformat()}.html",
+                mime="text/html",
+            )
+            r2.caption(
+                "Self-contained: no scripts, no external requests, opens offline in any "
+                "browser and prints to PDF via Ctrl+P."
+            )
 
         df = data["daily"]
         fig = go.Figure()

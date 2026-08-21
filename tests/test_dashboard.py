@@ -126,3 +126,19 @@ def test_dashboard_renders_on_an_empty_database(tmp_db):
     """A fresh DB must show the "run sync first" path, not a traceback."""
     app = _run()
     assert not app.exception, [e.value for e in app.exception]
+
+
+def test_overview_report_button_produces_a_downloadable_document(tmp_db):
+    """The button builds the report and hands it to a download_button."""
+    _seed()
+    app = _run()
+    assert not app.exception, [e.value for e in app.exception]
+
+    buttons = [b for b in app.button if "HTML report" in b.label]
+    assert buttons, [b.label for b in app.button]
+    buttons[0].click().run()
+    assert not app.exception, [e.value for e in app.exception]
+
+    downloads = [d for d in app.get("download_button") if "HTML report" in d.label]
+    assert downloads, "no download button appeared after preparing the report"
+    assert "Portfolio report" in app.session_state["report_html"]

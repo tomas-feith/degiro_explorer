@@ -945,6 +945,9 @@ def ticker_price_check(tolerance_pct: float = 3.0) -> pd.DataFrame:
             }
         )
     df = pd.DataFrame(rows, columns=cols)
+    # Coerce first: a holding with no overlapping price day carries None here, and an
+    # object column of floats-and-None raises inside the abs() sort key.
+    df["worst_gap_pct"] = pd.to_numeric(df["worst_gap_pct"], errors="coerce")
     return df.sort_values("worst_gap_pct", key=lambda c: c.abs(), ascending=False, na_position="first")
 
 

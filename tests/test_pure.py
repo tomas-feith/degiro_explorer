@@ -737,3 +737,36 @@ def test_dividends_in_a_foreign_currency_are_converted_before_totalling(tmp_db):
     div = analytics.dividends()
     assert div["amount"].sum() == pytest.approx(30.0)  # unlike units, not a real total
     assert div["amount_base"].sum() == pytest.approx(29.0)  # 20 EUR + 10 USD @ 0.9
+
+
+def test_ticker_price_check_handles_a_holding_with_no_overlapping_price_day(tmp_db):
+    """No trade lands on a stored price date, so the gap is undefined, not zero.
+
+    The None it yields used to blow up the abs() sort key with "bad operand type".
+    """
+    from degiro_explorer import analytics, store
+
+    with store.connection() as conn:
+        store.save_products(conn, {1: {"isin": "IE_X", "symbol": "X", "name": "Fund", "currency": "EUR"}})
+        store.save_transactions(
+            conn,
+            [
+                {
+                    "id": 1,
+                    "date": "2026-04-07T08:00:00+02:00",
+                    "product_id": 1,
+                    "buysell": "B",
+                    "quantity": 1.0,
+                    "price": 10.0,
+                    "total": -10.0,
+                    "total_in_base_currency": -10.0,
+                    "total_plus_all_fees_in_base_currency": -10.0,
+                    "fee_in_base_currency": 0.0,
+                }
+            ],
+        )
+        store.save_prices(conn, "X", [("2026-05-01", 10.5)])  # different day
+
+    row = analytics.ticker_price_check().iloc[0]
+    assert row["status"] == "no overlapping day"
+    assert pd.isna(row["worst_gap_pct"])
