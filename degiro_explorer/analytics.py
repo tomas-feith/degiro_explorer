@@ -51,12 +51,60 @@ def position_value_history() -> pd.DataFrame:
     return merged[["date", "name", "value"]].sort_values("date")
 
 
+COST_FIELD = "total_plus_all_fees_in_base_currency"
+
+
+def _prepared_transactions() -> pd.DataFrame:
+    """Transactions with date/quantity/cost coerced, ready for a cost-basis walk."""
+    tx = store.read_df("transactions")
+    if tx.empty:
+        return tx
+    tx = tx.copy()
+    tx["date"] = pd.to_datetime(tx["date"], utc=True).dt.tz_localize(None)
+    tx[COST_FIELD] = pd.to_numeric(tx[COST_FIELD], errors="coerce").fillna(0.0)
+    tx["quantity"] = pd.to_numeric(tx["quantity"], errors="coerce").fillna(0.0)
+    return tx.sort_values("date")
+
+
+def _average_cost_walk(grp: pd.DataFrame) -> pd.DataFrame:
+    """Running quantity and MOVING-AVERAGE cost basis of one product, per date.
+
+    Deliberately not FIFO: this feeds the per-holding return views, read side by side
+    with the DEGIRO app, and DEGIRO prices a position off a running average cost (its
+    `breakEvenPrice`). A buy adds its full base-currency cost (fees included, which is
+    why this sits a cent or two above DEGIRO's fee-free break-even); a sell removes
+    quantity at the running average and leaves the average untouched. FIFO stays the
+    basis for realized_gains(), transaction_pnl() and the tax tab.
+
+    Never net sale proceeds against purchases instead: that subtracts a realised gain
+    from the cost of the shares still held, and a partly sold-down holding then shows a
+    collapsed basis and a wild return (IQQY read +45% against a real +5%).
+    """
+    qty = 0.0
+    cost = 0.0
+    rows = []
+    for _, t in grp.iterrows():
+        q = float(t["quantity"])
+        if q > 0:
+            qty += q
+            cost += abs(float(t[COST_FIELD]))
+        elif q < 0:
+            sold = min(-q, qty)  # a sale reaching back past the fetched history cannot go negative
+            avg = cost / qty if qty > 1e-9 else 0.0
+            cost -= sold * avg
+            qty -= sold
+        rows.append({"date": t["date"], "quantity": qty, "cost": cost if qty > 1e-9 else 0.0})
+    if not rows:
+        return pd.DataFrame(columns=["date", "quantity", "cost"])
+    return pd.DataFrame(rows).groupby("date", as_index=False).last()
+
+
 def position_return_history() -> pd.DataFrame:
     """Long frame of each holding's % return over time: date, name, return_pct.
 
-    return_pct(t) = value(t) / cumulative_cost(t) - 1, where cumulative_cost is the
-    base-currency money put into that holding up to date t (handles staggered buys).
-    Normalised, so holdings are comparable regardless of position size.
+    return_pct(t) = value(t) / basis(t) - 1, where basis(t) is the moving-average cost
+    of the shares held on date t (see _average_cost_walk; handles staggered buys and
+    sell-downs). Normalised, so holdings are comparable regardless of position size.
     """
     hist = store.read_df("daily_position_value")
     tx = store.read_df("transactions")
@@ -64,19 +112,16 @@ def position_return_history() -> pd.DataFrame:
         return pd.DataFrame(columns=["date", "name", "return_pct"])
 
     hist["date"] = pd.to_datetime(hist["date"])
-    tx["date"] = pd.to_datetime(tx["date"], utc=True).dt.tz_localize(None).dt.normalize()
-    cost_field = "total_plus_all_fees_in_base_currency"
-    tx[cost_field] = pd.to_numeric(tx[cost_field], errors="coerce").fillna(0.0)
+    tx = _prepared_transactions()
+    tx["date"] = tx["date"].dt.normalize()
 
     products = store.read_df("products").set_index("id")
     out = []
     for pid, g in hist.groupby("product_id"):
-        buys = tx[tx["product_id"] == pid]
-        if buys.empty:
+        trades = tx[tx["product_id"] == pid]
+        if trades.empty:
             continue
-        cum_cost = (-buys.groupby("date")[cost_field].sum()).sort_index().cumsum()
-        cost_df = cum_cost.reset_index()
-        cost_df.columns = ["date", "cost"]
+        cost_df = _average_cost_walk(trades)[["date", "cost"]]
         merged = pd.merge_asof(
             g[["date", "value"]].sort_values("date"),
             cost_df.sort_values("date"),
@@ -613,39 +658,17 @@ def realized_gains() -> pd.DataFrame:
 
 
 def _open_lot_cost() -> dict[object, float]:
-    """Cost basis of the shares still held, per product, on a MOVING-AVERAGE basis.
+    """Cost basis of the shares still held, per product, on a moving-average basis.
 
-    Deliberately not FIFO: this feeds the per-holding return, which is read side by side
-    with the DEGIRO app, and DEGIRO prices a position off a running average cost
-    (its `breakEvenPrice`). A buy adds its full base-currency cost (fees included, which
-    is why this sits a cent or two above DEGIRO's fee-free break-even); a sell removes
-    quantity at the running average, leaving the average untouched. FIFO stays the basis
-    for realized_gains(), transaction_pnl() and the tax tab.
+    The last point of _average_cost_walk(), which carries the rationale.
     """
-    tx = store.read_df("transactions")
+    tx = _prepared_transactions()
     if tx.empty:
         return {}
-    tx = tx.copy()
-    tx["date"] = pd.to_datetime(tx["date"], utc=True).dt.tz_localize(None)
-    cost_field = "total_plus_all_fees_in_base_currency"
-    tx[cost_field] = pd.to_numeric(tx[cost_field], errors="coerce").fillna(0.0)
-    tx["quantity"] = pd.to_numeric(tx["quantity"], errors="coerce").fillna(0.0)
-
     out: dict[object, float] = {}
-    for pid, grp in tx.sort_values("date").groupby("product_id"):
-        qty = 0.0
-        cost = 0.0
-        for _, t in grp.iterrows():
-            q = float(t["quantity"])
-            if q > 0:
-                qty += q
-                cost += abs(float(t[cost_field]))
-            elif q < 0:
-                sold = min(-q, qty)  # a sale beyond known history cannot go negative
-                avg = cost / qty if qty > 1e-9 else 0.0
-                cost -= sold * avg
-                qty -= sold
-        out[pid] = cost if qty > 1e-9 else 0.0
+    for pid, grp in tx.groupby("product_id"):
+        walk = _average_cost_walk(grp)
+        out[pid] = float(walk["cost"].iloc[-1]) if not walk.empty else 0.0
     return out
 
 

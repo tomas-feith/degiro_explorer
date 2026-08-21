@@ -364,3 +364,50 @@ def test_pnl_reconciliation_bridges_the_transaction_ledger_to_total_pnl(tmp_db):
     assert rec["unrealized"] == pytest.approx(100.0)  # 100 shares marked 10 -> 11
     assert rec["dividends"] == pytest.approx(20.0)
     assert rec["other"] == pytest.approx(5.0)  # the rebate, not a silent residual
+
+
+def test_position_return_history_does_not_spike_on_a_sell_down(tmp_db):
+    """The over-time plot shares the per-holding basis, so it must not spike on a sale.
+
+    It had its own copy of the netting bug: cumulative cost ran as buys minus sale
+    proceeds, so the day IQQY was sold down the curve jumped from ~6% to ~45%.
+    """
+    from degiro_explorer import analytics, store
+
+    def tx(tid: int, day: str, qty: float, total: float) -> dict:
+        return {
+            "id": tid,
+            "date": f"2026-{day}T08:00:00+02:00",
+            "product_id": 7,
+            "buysell": "B" if qty > 0 else "S",
+            "quantity": qty,
+            "price": abs(total / qty),
+            "total": total,
+            "total_in_base_currency": total,
+            "total_plus_all_fees_in_base_currency": total,
+            "fee_in_base_currency": 0.0,
+        }
+
+    with store.connection() as conn:
+        store.save_products(conn, {7: {"isin": "X", "symbol": "X", "name": "Fund", "currency": "EUR"}})
+        store.save_transactions(
+            conn,
+            [
+                tx(1, "04-07", 100.0, -3850.0),  # 100 @ 38.50
+                tx(2, "08-18", -50.0, 2100.0),  # sold half at 42.00
+            ],
+        )
+        store.save_position_values(
+            conn,
+            [
+                ("2026-08-17", 7, 4100.0),  # 100 shares @ 41.00
+                ("2026-08-18", 7, 2100.0),  # 50 left @ 42.00
+                ("2026-08-19", 7, 2100.0),
+            ],
+        )
+
+    hist = analytics.position_return_history().set_index("date")["return_pct"]
+    assert hist.loc["2026-08-17"] == pytest.approx((41.0 / 38.50 - 1) * 100)
+    # Basis halves with the position: the return tracks price, it does not jump.
+    assert hist.loc["2026-08-18"] == pytest.approx((42.0 / 38.50 - 1) * 100)
+    assert hist.max() < 15.0
