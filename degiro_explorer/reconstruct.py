@@ -100,9 +100,11 @@ def build_daily_value(base_currency: str) -> pd.DataFrame:
         if not ticker or ticker not in price_frame:
             continue
         qty = grp.groupby("date")["quantity"].sum().reindex(calendar, fill_value=0.0).cumsum()
-        cur = (cur_by_pid.get(pid) or base_currency).upper()
+        # A London listing is quoted in pence against a GBX product currency: scale the
+        # price and convert with GBP, or the row values at zero (no "GBXEUR" pair exists).
+        cur, divisor = prices.quote_adjustment(cur_by_pid.get(pid) or base_currency)
         fx = fx_frame[cur] if cur in fx_frame else pd.Series(1.0, index=calendar)
-        pos_val = qty * price_frame[ticker] * fx
+        pos_val = qty * (price_frame[ticker] / divisor) * fx
         pos_series[int(pid)] = pos_val
         holdings = holdings.add(pos_val, fill_value=0.0)
 
@@ -117,12 +119,14 @@ def build_daily_value(base_currency: str) -> pd.DataFrame:
         movements = movements[~movements["type"].isin(INTERNAL_MOVEMENT_TYPES)]
         movements["date"] = _to_naive_day(movements["date"])
         movements["change"] = pd.to_numeric(movements["change"], errors="coerce").fillna(0.0)
-        movements["cur"] = movements["currency"].fillna(base_currency).str.upper()
+        adjusted = movements["currency"].fillna(base_currency).map(prices.quote_adjustment)
+        movements["cur"] = [a[0] for a in adjusted]
+        movements["divisor"] = [a[1] for a in adjusted]
 
         def to_base(r):
             fx = fx_frame.get(r["cur"], None)
             rate = fx.asof(r["date"]) if fx is not None else 1.0
-            return r["change"] * (rate if pd.notna(rate) else 1.0)
+            return r["change"] / r["divisor"] * (rate if pd.notna(rate) else 1.0)
 
         movements["change_base"] = movements.apply(to_base, axis=1)
         daily_change = movements.groupby("date")["change_base"].sum()

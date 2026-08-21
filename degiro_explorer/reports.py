@@ -32,13 +32,30 @@ def _reports_dir() -> Path:
 
 
 def _to_float(value) -> float | None:
-    """Parse a DEGIRO-locale number like '6Â 115,78' or '-4008,50' -> float."""
+    """Parse a number out of a DEGIRO report, whichever locale it arrives in.
+
+    The account is pt_PT (comma decimal, NBSP thousands) but the reports are REQUESTED
+    with lang="en" (see fetch.fetch_account_report). Hard-coding the comma-decimal rule
+    means an English-formatted report would parse '0.35' as 35 -- every figure 100x
+    wrong, silently. So decide from the separators actually present: whichever of '.' or
+    ',' comes last is the decimal point, and a separator that repeats, or is followed by
+    exactly three digits with another separator present, is a thousands mark.
+    """
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
     s = str(value).strip().replace("\xa0", "").replace("Â", "").replace(" ", "")
     if not s:
         return None
-    s = s.replace(".", "").replace(",", ".")  # '.' thousands -> remove; ',' decimal -> '.'
+    last_dot, last_comma = s.rfind("."), s.rfind(",")
+    if last_dot >= 0 and last_comma >= 0:
+        # Both present: the rightmost is the decimal separator, the other is thousands.
+        dec, thou = (".", ",") if last_dot > last_comma else (",", ".")
+        s = s.replace(thou, "").replace(dec, ".")
+    elif last_comma >= 0:
+        # Only commas: a single one with <3 trailing digits is decimal; else thousands.
+        s = s.replace(",", "") if (s.count(",") > 1 or len(s) - last_comma - 1 == 3) else s.replace(",", ".")
+    elif last_dot >= 0 and (s.count(".") > 1 or len(s) - last_dot - 1 == 3):
+        s = s.replace(".", "")  # 1.234 -> thousands, not a decimal
     try:
         return float(s)
     except ValueError:
@@ -123,11 +140,13 @@ def crosscheck() -> pd.DataFrame:
     acct = read_account_report()
     if acct is not None:
         div = analytics.dividends()
-        app_div = float(div["amount"].sum()) if not div.empty else 0.0
-        rows.append(_row("Dividends (total)", app_div, _sum_by_keywords(acct, ("dividend",))))
+        app_div = float(div["amount_base"].sum()) if not div.empty else 0.0
+        rows.append(_row("Dividends (total)", app_div, _sum_by_keywords(acct, analytics.DIVIDEND_KEYWORDS)))
         fee = analytics.fees()
-        app_fee = float(fee["amount"].sum()) if not fee.empty else 0.0
-        rows.append(_row("Fees (total)", app_fee, _sum_by_keywords(acct, ("comiss", "taxa", "fee"))))
+        app_fee = float(fee["amount_base"].sum()) if not fee.empty else 0.0
+        # Same keyword list as analytics.fees(), or the two sides total different rows
+        # and the cross-check reports a discrepancy that exists only between the filters.
+        rows.append(_row("Fees (total)", app_fee, _sum_by_keywords(acct, analytics.FEE_KEYWORDS)))
 
     return pd.DataFrame(rows)
 

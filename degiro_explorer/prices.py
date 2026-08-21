@@ -25,6 +25,18 @@ CURRENCY_SUFFIX = {
 }
 
 
+# London quotes in pence while DEGIRO reports the currency as GBX (or GBp). Yahoo
+# follows the venue, so a `.L` close is pence: it must be divided by 100 AND converted
+# with the GBP rate, not a non-existent "GBXEUR" pair. Without this a GBX holding
+# silently values at zero (the FX lookup finds nothing and the product drops out).
+def quote_adjustment(currency: str | None) -> tuple[str, float]:
+    """(currency to convert with, divisor to apply to the quoted price)."""
+    cur = (currency or "").strip()
+    if cur.upper() == "GBX" or cur == "GBp":
+        return "GBP", 100.0
+    return cur.upper(), 1.0
+
+
 def _load_overrides() -> dict[str, str]:
     path = settings.tickers_file
     if not path.exists():
@@ -69,14 +81,23 @@ def resolve_tickers(products: pd.DataFrame) -> tuple[dict[int, str], list[dict]]
     return mapping, unresolved
 
 
-def _download_close(ticker: str, start: date, end: date) -> list[tuple[str, float]]:
+def _download_close(ticker: str, start: date, end: date, auto_adjust: bool = False) -> list[tuple[str, float]]:
+    """Daily closes for `ticker`.
+
+    `auto_adjust` back-adjusts history for dividends -- a TOTAL-RETURN series. That is
+    right for a benchmark (compared against a portfolio whose dividends are kept) and
+    WRONG for valuing holdings: the dividend is already counted as cash, so an adjusted
+    price counts it twice, and every new distribution retroactively rewrites the whole
+    past series. Measured on IQQY: the stored 2026-04-07 close read 36.045 against a
+    real close of 36.745, 1.9% low, and the 2026-08-20 ex-date moved it again.
+    """
     try:
         df = yf.download(
             ticker,
             start=start.isoformat(),
             end=(end + timedelta(days=1)).isoformat(),
             progress=False,
-            auto_adjust=True,
+            auto_adjust=auto_adjust,
         )
     except Exception:  # noqa: BLE001
         logger.warning("yfinance failed for %s", ticker, exc_info=True)
@@ -118,7 +139,8 @@ def backfill_benchmarks(start: date, end: date) -> dict[str, int]:
     counts: dict[str, int] = {}
     with store.connection() as conn:
         for ticker in load_benchmarks():
-            series = _download_close(ticker, start, end)
+            # Total return: the benchmark must include its dividends to be comparable.
+            series = _download_close(ticker, start, end, auto_adjust=True)
             if series:
                 store.save_benchmark_prices(conn, ticker, series)
             counts[ticker] = len(series)
@@ -133,8 +155,10 @@ def backfill_fx(currencies: set[str], base: str, start: date, end: date) -> None
     """
     base = base.upper()
     with store.connection() as conn:
-        for cur in sorted({c.upper() for c in currencies if c}):
-            if cur == base:
+        # GBX is quoted in pence but converted with the GBP rate (see quote_adjustment).
+        wanted = {quote_adjustment(c)[0] for c in currencies if c}
+        for cur in sorted(wanted):
+            if cur == base or not cur:
                 continue
             pair = f"{cur}{base}"
             series = _download_close(f"{pair}=X", start, end)

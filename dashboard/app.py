@@ -25,6 +25,14 @@ st.set_page_config(page_title="DEGIRO Explorer", page_icon="📈", layout="wide"
 
 @st.cache_data(ttl=300)
 def _load():
+    # One render fans out over ~26 analytics functions that each re-read whole tables
+    # through their own connection (55 reads before this). The block is read-only.
+    with store.cached_reads():
+        return _derive()
+
+
+def _derive():
+    transaction_pnl = analytics.transaction_pnl()
     return {
         "daily": analytics.daily_value(),
         "kpis": analytics.summary_kpis(),
@@ -38,8 +46,9 @@ def _load():
         "performance_curves": analytics.performance_curves(),
         "box3_reference": analytics.box3_reference_values(),
         "realized_gains": analytics.realized_gains(),
-        "transaction_pnl": analytics.transaction_pnl(),
-        "pnl_reconciliation": analytics.pnl_reconciliation(),
+        "transaction_pnl": transaction_pnl,
+        # Pass the ledger in: it is the same FIFO walk, and it is the costliest one.
+        "pnl_reconciliation": analytics.pnl_reconciliation(transaction_pnl),
         "lot_matches": analytics.lot_matches(),
         "crosscheck": reports.crosscheck(),
         "crosscheck_holdings": reports.crosscheck_holdings(),
@@ -52,6 +61,8 @@ def _load():
         "risk_metrics": analytics.risk_metrics(),
         "dividend_yield": analytics.dividend_yield(),
         "upcoming_payments": analytics.upcoming_payments(),
+        "ticker_check": analytics.ticker_price_check(),
+        "price_freshness": analytics.price_freshness(),
     }
 
 
@@ -132,7 +143,7 @@ def main() -> None:
         fig.add_trace(go.Scatter(x=df["date"], y=df["total_value"], name="Total value", fill="tozeroy"))
         fig.add_trace(go.Scatter(x=df["date"], y=df["net_invested"], name="Net invested", line={"dash": "dash"}))
         fig.update_layout(title="Portfolio value over time", hovermode="x unified", height=460)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         st.subheader("Contributions vs market growth")
         cg = data["contributions"]
@@ -144,7 +155,7 @@ def main() -> None:
             go.Scatter(x=cg["date"], y=cg["market_growth"], name="Market growth", stackgroup="one", line={"width": 0.5})
         )
         cgfig.update_layout(height=320, hovermode="x unified")
-        st.plotly_chart(cgfig, use_container_width=True)
+        st.plotly_chart(cgfig, width="stretch")
         st.caption(
             "How much of your total value is money you added vs. market gains. "
             "(If markets are down, 'market growth' can be negative.)"
@@ -183,7 +194,7 @@ def main() -> None:
             fig.update_layout(
                 title="Return over time (%) — vs benchmark", hovermode="x unified", height=440, yaxis_ticksuffix="%"
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             if not bench.empty:
                 st.caption(
                     "Benchmark = a buy-and-hold index for comparison (set in "
@@ -209,7 +220,7 @@ def main() -> None:
                     yaxis_tickprefix=f"{base} ",
                 )
                 plfig.add_hline(y=0, line_dash="dot", line_color="gray")
-                st.plotly_chart(plfig, use_container_width=True)
+                st.plotly_chart(plfig, width="stretch")
                 st.caption(
                     "Absolute profit/loss in cash terms: how many "
                     f"{base} your portfolio is above (or below) the money "
@@ -223,7 +234,7 @@ def main() -> None:
             ddfig = px.area(dd, x="date", y="drawdown_pct", height=280, labels={"drawdown_pct": "Drawdown %"})
             ddfig.update_traces(line_color="#d6455d", fillcolor="rgba(214,69,93,0.2)")
             ddfig.update_layout(yaxis_ticksuffix="%")
-            st.plotly_chart(ddfig, use_container_width=True)
+            st.plotly_chart(ddfig, width="stretch")
             st.caption(
                 "Decline from the portfolio's running peak (deposit-proof, from the "
                 "TWR index) — shows the worst dips you've sat through."
@@ -290,7 +301,7 @@ def main() -> None:
             cfig = px.imshow(
                 cshort, text_auto=".2f", color_continuous_scale="RdBu_r", zmin=-1, zmax=1, aspect="auto", height=460
             )
-            st.plotly_chart(cfig, use_container_width=True)
+            st.plotly_chart(cfig, width="stretch")
 
     # --- Holdings ---
     with tabs[2]:
@@ -300,11 +311,13 @@ def main() -> None:
         else:
             st.dataframe(
                 holdings,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "size": st.column_config.NumberColumn("Size", format="%.4f"),
-                    "price": st.column_config.NumberColumn(f"Price ({base})", format="%.2f"),
+                    # DEGIRO quotes this in the product's own currency (see the currency
+                    # column), which is not necessarily the account's base currency.
+                    "price": st.column_config.NumberColumn("Price (quote ccy)", format="%.2f"),
                     "value": st.column_config.NumberColumn(f"Value ({base})", format="%.2f"),
                 },
             )
@@ -320,11 +333,14 @@ def main() -> None:
         else:
             query = st.text_input("Filter by name/symbol").strip().lower()
             if query:
-                mask = tx["name"].fillna("").str.lower().str.contains(query) | tx["symbol"].fillna(
+                # regex=False: fund names contain parentheses ("... USD (Acc)"), so a
+                # regex search silently matches nothing on "(acc)" and raises outright
+                # on an unbalanced one, taking the tab down with it.
+                mask = tx["name"].fillna("").str.lower().str.contains(query, regex=False) | tx["symbol"].fillna(
                     ""
-                ).str.lower().str.contains(query)
+                ).str.lower().str.contains(query, regex=False)
                 tx = tx[mask]
-            st.dataframe(tx, use_container_width=True, hide_index=True)
+            st.dataframe(tx, width="stretch", hide_index=True)
 
         st.subheader("P&L per transaction")
         tpnl = data["transaction_pnl"]
@@ -339,7 +355,7 @@ def main() -> None:
             money = st.column_config.NumberColumn(format="%.2f")
             st.dataframe(
                 tpnl[analytics.TRANSACTION_PNL_COLUMNS],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "unit_price": st.column_config.NumberColumn(f"Unit price ({base})", format="%.4f"),
@@ -372,7 +388,7 @@ def main() -> None:
                 with st.expander("Which purchase supplied each sold share (FIFO lot matches)"):
                     st.dataframe(
                         lm.drop(columns=["sell_tx_id", "buy_tx_id"]),
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True,
                         column_config={
                             "buy_unit_price": st.column_config.NumberColumn(f"Buy price ({base})", format="%.4f"),
@@ -398,7 +414,7 @@ def main() -> None:
         else:
             st.dataframe(
                 dy,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "dividends": st.column_config.NumberColumn(f"Dividends ({base})", format="%.2f"),
@@ -416,7 +432,7 @@ def main() -> None:
         if up.empty:
             st.info("None reported by DEGIRO (or not yet fetched — run a full sync).")
         else:
-            st.dataframe(up, use_container_width=True, hide_index=True)
+            st.dataframe(up, width="stretch", hide_index=True)
 
     # --- Tax (NL Box 3) ---
     with tabs[4]:
@@ -445,7 +461,7 @@ def _holdings_detail(data, base):
                 height=400,
                 labels={"value": f"Value ({base})", "name": "Holding"},
             ),
-            use_container_width=True,
+            width="stretch",
         )
 
     # Per-holding return over time
@@ -464,7 +480,7 @@ def _holdings_detail(data, base):
         )
         fig_rh.add_hline(y=0, line_dash="dot", line_color="gray")
         fig_rh.update_layout(yaxis_ticksuffix="%")
-        st.plotly_chart(fig_rh, use_container_width=True)
+        st.plotly_chart(fig_rh, width="stretch")
 
     # Per-holding return (value vs cost)
     st.subheader("Per-holding return (value vs cost)")
@@ -486,10 +502,10 @@ def _holdings_detail(data, base):
             text_auto=".1f",
         )
         fig_perf.update_layout(showlegend=False, yaxis={"categoryorder": "total ascending"})
-        st.plotly_chart(fig_perf, use_container_width=True)
+        st.plotly_chart(fig_perf, width="stretch")
         st.dataframe(
             perf[["name", "cost", "value", "pnl", "return_pct"]],
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "cost": st.column_config.NumberColumn(f"Cost ({base})", format="%.2f"),
@@ -511,23 +527,19 @@ def _holdings_detail(data, base):
         by_asset = cls.groupby("asset_class", as_index=False)["value"].sum()
         st.plotly_chart(
             px.pie(by_asset, names="asset_class", values="value", title="By asset class", hole=0.4),
-            use_container_width=True,
+            width="stretch",
         )
     with a2:
         by_cat = cls.groupby("category", as_index=False)["value"].sum()
         st.plotly_chart(
             px.pie(by_cat, names="category", values="value", title="Core vs satellite", hole=0.4),
-            use_container_width=True,
+            width="stretch",
         )
     with a3:
         by_region = cls.groupby("region", as_index=False)["value"].sum()
-        st.plotly_chart(
-            px.pie(by_region, names="region", values="value", title="By region", hole=0.4), use_container_width=True
-        )
+        st.plotly_chart(px.pie(by_region, names="region", values="value", title="By region", hole=0.4), width="stretch")
     with a4:
-        st.plotly_chart(
-            px.pie(cls, names="theme", values="value", title="By theme", hole=0.4), use_container_width=True
-        )
+        st.plotly_chart(px.pie(cls, names="theme", values="value", title="By theme", hole=0.4), width="stretch")
     st.caption(
         "Classification from holdings_meta.yml — edit that file to reclassify. "
         "Asset class separates bonds from equity; region reflects each fund's mandate "
@@ -544,7 +556,7 @@ def _holdings_detail(data, base):
     cost_tbl = cls.assign(annual_cost=cls["value"] * cls["ter"] / 100)
     st.dataframe(
         cost_tbl[["name", "weight", "ter", "annual_cost"]],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "weight": st.column_config.NumberColumn("Weight %", format="%.1f"),
@@ -572,9 +584,46 @@ def _data_tab(data, base):
     _, unresolved = _resolve_unresolved(products)
     if unresolved:
         st.warning(f"{len(unresolved)} product(s) without a resolved price ticker — add them to tickers.yml:")
-        st.dataframe(pd.DataFrame(unresolved), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(unresolved), width="stretch", hide_index=True)
     else:
         st.success("All products have a resolved price ticker. ✓")
+
+    fresh = data["price_freshness"]
+    if fresh.get("lag_days") is not None and fresh["lag_days"] > 1:
+        st.warning(
+            f"Cached prices end **{fresh['latest_price']}**, {fresh['lag_days']} days before the "
+            f"last sync ({fresh['last_sync']}). Recent days are valued at the last close "
+            "available — re-run a sync once Yahoo has published them."
+        )
+
+    # A resolved ticker is not a correct ticker: auto-resolution has silently matched a
+    # different security on another exchange and backfilled plausible wrong prices.
+    st.markdown("**Price series vs the prices you actually traded at**")
+    st.caption(
+        "Each holding's stored close on a trade date, compared with that trade's price. "
+        "A few tenths of a percent is intraday drift; a large gap means the ticker "
+        "resolved to the wrong security, so fix it in tickers.yml and re-run "
+        "`sync.py --offline`."
+    )
+    check = data["ticker_check"]
+    if check.empty:
+        st.info("No transactions to validate prices against yet.")
+    else:
+        bad = check[check["status"] != "ok"]
+        if bad.empty:
+            st.success("Every price series matches its transaction prices. ✓")
+        else:
+            st.warning(f"{len(bad)} holding(s) need a look — see the status column.")
+        st.dataframe(
+            check,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "rows": st.column_config.NumberColumn("Price rows", format="%d"),
+                "trades_checked": st.column_config.NumberColumn("Trades checked", format="%d"),
+                "worst_gap_pct": st.column_config.NumberColumn("Worst gap %", format="%.2f"),
+            },
+        )
 
     cc = data["crosscheck"]
     if not cc.empty:
@@ -617,31 +666,36 @@ def _income_section(df, base, cumulative: bool):
         st.info("None found.")
         return
 
-    st.metric("Total", f"{df['amount'].sum():,.2f} {base}")
+    # Total over the base-currency column: `amount` is in each movement's own currency,
+    # so summing it across currencies would add unlike units.
+    st.metric("Total", f"{df['amount_base'].sum():,.2f} {base}")
 
     # Table first — clearest for sparse, discrete payments.
     st.dataframe(
         df.sort_values("month"),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
-        column_config={"amount": st.column_config.NumberColumn(f"Amount ({base})", format="%.2f")},
+        column_config={
+            "amount": st.column_config.NumberColumn("Amount (own ccy)", format="%.2f"),
+            "amount_base": st.column_config.NumberColumn(f"Amount ({base})", format="%.2f"),
+        },
     )
 
     # Monthly bars: discrete amount per period. Only colour by currency if >1 currency.
     multi_ccy = df["currency"].nunique() > 1
-    bar = px.bar(df, x="month", y="amount", height=300, color="currency" if multi_ccy else None)
+    bar = px.bar(df, x="month", y="amount_base", height=300, color="currency" if multi_ccy else None)
     bar.update_layout(showlegend=multi_ccy)
-    st.plotly_chart(bar, use_container_width=True)
+    st.plotly_chart(bar, width="stretch")
 
     # Cumulative line — the one line view that makes sense (running total over time).
     if cumulative:
         cum = df.sort_values("month").copy()
-        cum["cumulative"] = cum["amount"].cumsum()
+        cum["cumulative"] = cum["amount_base"].cumsum()
         st.plotly_chart(
             px.line(
                 cum, x="month", y="cumulative", markers=True, height=260, labels={"cumulative": f"Cumulative ({base})"}
             ),
-            use_container_width=True,
+            width="stretch",
         )
 
 
@@ -670,7 +724,7 @@ def _tax_tab(data, base):
         )
         st.dataframe(
             cc,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "app": st.column_config.NumberColumn(f"App ({base})", format="%.2f"),
@@ -688,7 +742,7 @@ def _tax_tab(data, base):
             st.markdown("**Per-holding reconciliation** (value vs position report, by ISIN)")
             st.dataframe(
                 cch,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "app": st.column_config.NumberColumn(f"App ({base})", format="%.2f"),
@@ -729,7 +783,7 @@ def _tax_tab(data, base):
     else:
         st.dataframe(
             ref,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={"value": st.column_config.NumberColumn(f"Value 1-Jan ({base})", format="%.2f")},
         )
@@ -795,12 +849,12 @@ def _tax_tab(data, base):
     if div.empty:
         st.info("No dividends recorded.")
     else:
-        st.metric("Total dividends", f"{div['amount'].sum():,.2f}")
+        st.metric("Total dividends", f"{div['amount_base'].sum():,.2f} {base}")
         st.caption(
             "No Dutch dividend withholding (*dividendbelasting*) is recorded in your "
             "data — typical for Irish-domiciled ETFs. Any NL withholding is creditable."
         )
-        st.dataframe(div, use_container_width=True, hide_index=True)
+        st.dataframe(div, width="stretch", hide_index=True)
 
     # 4. Realized gains — informational (not taxed in NL Box 3)
     st.subheader("Realised gains (informational)")
@@ -812,7 +866,7 @@ def _tax_tab(data, base):
             "FIFO (First-In, First-Out) matched. Not taxed for NL private investors "
             "under Box 3 — shown for completeness."
         )
-        st.dataframe(rg, use_container_width=True, hide_index=True)
+        st.dataframe(rg, width="stretch", hide_index=True)
 
     # 5. Legal / domicile notes
     st.subheader("Notes")

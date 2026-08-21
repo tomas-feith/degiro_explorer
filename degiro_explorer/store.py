@@ -161,6 +161,22 @@ def _migrate(conn: sqlite3.Connection) -> None:
             conn.executescript(SCHEMA)
             break
 
+    # cash_movements rows written before the NULL-change fix above defeated the primary
+    # key and piled up one duplicate per sync. Collapse them, keeping one row per
+    # (id, date, description) and normalising the NULL that caused it.
+    dupes = conn.execute(
+        "SELECT COUNT(*) - COUNT(DISTINCT id || '|' || COALESCE(date,'') || '|' || "
+        "COALESCE(description,'')) FROM cash_movements"
+    ).fetchone()[0]
+    if dupes:
+        # Collapse BEFORE normalising the NULL: doing it the other way round makes the
+        # surviving rows collide on the very primary key that let them in.
+        conn.execute(
+            "DELETE FROM cash_movements WHERE rowid NOT IN ("
+            "  SELECT MIN(rowid) FROM cash_movements GROUP BY id, date, description)"
+        )
+        conn.execute("UPDATE cash_movements SET change = 0.0 WHERE change IS NULL")
+
 
 def set_meta(conn: sqlite3.Connection, key: str, value) -> None:
     conn.execute(
@@ -226,7 +242,11 @@ def save_cash_movements(conn: sqlite3.Connection, rows: list[dict]) -> None:
                 r.get("type"),
                 r.get("description"),
                 r.get("currency"),
-                r.get("change"),
+                # NEVER store NULL here: `change` is part of the primary key, and SQLite
+                # treats NULLs as distinct, so a NULL-change row (DEGIRO sends them for
+                # FLATEX_CASH_SWEEP) never matches on re-insert and the table grows a new
+                # copy of it on every sync -- 268 rows for 71 movements before this fix.
+                _as_float(r.get("change")) or 0.0,
                 json.dumps(r.get("balance"), default=str),
                 json.dumps(r, default=str),
             ),
@@ -344,9 +364,38 @@ def save_position_values(conn: sqlite3.Connection, rows: list[tuple[str, int, fl
 # ---------------------------------------------------------------------------
 
 
+_read_cache: dict[tuple[str, str], pd.DataFrame] | None = None
+
+
+@contextmanager
+def cached_reads():
+    """Memoise read_df within the block -- for one dashboard render, not for writes.
+
+    A dashboard load fans out over ~26 analytics functions that each re-read whole
+    tables through their own connection: 55 reads (products 15x, daily_value 11x) per
+    render. Scoping the cache to an explicit block keeps every writer -- sync, and the
+    tests, which read back what they just wrote -- on uncached reads.
+    """
+    global _read_cache
+    outer = _read_cache
+    if outer is None:
+        _read_cache = {}
+    try:
+        yield
+    finally:
+        _read_cache = outer
+
+
 def read_df(table: str, db_path: Path | None = None) -> pd.DataFrame:
+    cache = _read_cache
+    key = (table, str(db_path or settings.db_file))
+    if cache is not None and key in cache:
+        return cache[key].copy()  # callers mutate what they get back
     with connection(db_path) as conn:
-        return pd.read_sql_query(f"SELECT * FROM {table}", conn)
+        df = pd.read_sql_query(f"SELECT * FROM {table}", conn)  # noqa: S608 - internal table names only
+    if cache is not None:
+        cache[key] = df.copy()
+    return df
 
 
 def _as_str(value):

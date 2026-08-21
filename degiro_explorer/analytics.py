@@ -353,15 +353,60 @@ def _movements_by_keyword(keywords: tuple[str, ...]) -> pd.DataFrame:
     return mv.loc[mask]
 
 
+def _fx_asof(pair: str) -> pd.Series:
+    """Stored daily rates for `pair` (units of base per 1 unit), date-indexed."""
+    fx = store.read_df("fx_rates")
+    if fx.empty:
+        return pd.Series(dtype=float)
+    rows = fx[fx["pair"] == pair]
+    if rows.empty:
+        return pd.Series(dtype=float)
+    s = rows.copy()
+    s["date"] = pd.to_datetime(s["date"])
+    return s.set_index("date")["rate"].sort_index()
+
+
+def to_base_currency(movements: pd.DataFrame, base: str = "EUR") -> pd.Series:
+    """Convert a cash-movement frame's `change` into the base currency.
+
+    Everything in this account is already EUR, so this is a no-op today -- but summing
+    a mixed-currency column as if it were base currency is silent corruption, and the
+    P/L bridge and the dividend totals both do exactly that sum.
+    """
+    if movements.empty:
+        return pd.Series(dtype=float)
+    change = pd.to_numeric(movements["change"], errors="coerce").fillna(0.0)
+    cur = movements["currency"].fillna(base)
+    out = change.copy()
+    for currency, idx in cur.groupby(cur).groups.items():
+        target, divisor = prices.quote_adjustment(str(currency))
+        if not target or target == base.upper():
+            out.loc[idx] = change.loc[idx] / divisor
+            continue
+        rates = _fx_asof(f"{target}{base.upper()}")
+        if rates.empty:
+            continue  # no rate cached: leave the raw figure rather than inventing one
+        dates = pd.to_datetime(movements.loc[idx, "date"], utc=True).dt.tz_localize(None)
+        out.loc[idx] = [
+            change.loc[i] / divisor * (rates.asof(d) if pd.notna(rates.asof(d)) else 1.0)
+            for i, d in zip(idx, dates, strict=False)
+        ]
+    return out
+
+
+# Shared with reports.crosscheck so the app total and the official-report total are
+# summed over the SAME rows -- two different keyword lists made the cross-check flag a
+# discrepancy that only existed between the two filters.
+DIVIDEND_KEYWORDS = ("dividend",)
+FEE_KEYWORDS = ("fee", "commission", "cost", "kosten", "comiss", "taxa")
+
+
 def dividends() -> pd.DataFrame:
-    div = _movements_by_keyword(("dividend",))
-    if div.empty:
-        return pd.DataFrame(columns=["month", "amount", "currency"])
-    div = div.assign(month=div["date"].dt.to_period("M").astype(str))
-    return div.groupby(["month", "currency"], as_index=False)["change"].sum().rename(columns={"change": "amount"})
+    """Dividends per month and currency, with a base-currency column to sum on."""
+    return _income_by_month(_movements_by_keyword(DIVIDEND_KEYWORDS))
 
 
-def pnl_reconciliation() -> dict:
+def pnl_reconciliation(per_tx: pd.DataFrame | None = None) -> dict:
     """Bridge the per-transaction P&L ledger to the headline Total P/L.
 
     They are NOT expected to be equal. The ledger can only carry P&L that belongs to a
@@ -369,18 +414,21 @@ def pnl_reconciliation() -> dict:
     they sit outside it by construction. Without this bridge the Overview's Total P/L
     reads higher than the Transactions tab's Combined and looks like a bug.
 
-    `other` is the residual, so the bridge always closes -- anything unexplained (FX on
-    a non-base-currency dividend, an unclassified credit) surfaces there rather than
-    silently splitting the two numbers.
+    `other` is the residual, so the bridge always closes -- anything unexplained (an
+    unclassified credit, a dividend in a currency with no cached FX rate) surfaces there
+    rather than silently splitting the two numbers.
     """
     kpi = summary_kpis()
     if not kpi:
         return {}
-    per_tx = transaction_pnl()
+    # Accept a ledger the caller already built: the dashboard renders it anyway, and the
+    # FIFO walk behind it is the most expensive thing in a page load.
+    if per_tx is None:
+        per_tx = transaction_pnl()
     realized = float(per_tx["realized"].sum()) if not per_tx.empty else 0.0
     unrealized = float(per_tx["unrealized"].sum()) if not per_tx.empty else 0.0
     div = dividends()
-    div_total = float(div["amount"].sum()) if not div.empty else 0.0
+    div_total = float(div["amount_base"].sum()) if not div.empty else 0.0
     total = float(kpi["total_pnl"])
     return {
         "realized": realized,
@@ -392,11 +440,22 @@ def pnl_reconciliation() -> dict:
 
 
 def fees() -> pd.DataFrame:
-    fee = _movements_by_keyword(("fee", "commission", "cost", "kosten", "comiss", "taxa"))
-    if fee.empty:
-        return pd.DataFrame(columns=["month", "amount", "currency"])
-    fee = fee.assign(month=fee["date"].dt.to_period("M").astype(str))
-    return fee.groupby(["month", "currency"], as_index=False)["change"].sum().rename(columns={"change": "amount"})
+    """Fees per month and currency, with a base-currency column to sum on."""
+    return _income_by_month(_movements_by_keyword(FEE_KEYWORDS))
+
+
+def _income_by_month(mv: pd.DataFrame) -> pd.DataFrame:
+    """Group a cash-movement slice by month + currency.
+
+    `amount` stays in the movement's own currency (that is what the per-currency table
+    shows); `amount_base` is the converted figure, and the only one safe to total.
+    """
+    cols = ["month", "amount", "currency", "amount_base"]
+    if mv.empty:
+        return pd.DataFrame(columns=cols)
+    mv = mv.assign(month=mv["date"].dt.to_period("M").astype(str), amount_base=to_base_currency(mv))
+    out = mv.groupby(["month", "currency"], as_index=False)[["change", "amount_base"]].sum()
+    return out.rename(columns={"change": "amount"})[cols]
 
 
 def dividend_yield() -> pd.DataFrame:
@@ -436,7 +495,10 @@ def transactions() -> pd.DataFrame:
     products = store.read_df("products")[["id", "name", "symbol"]]
     if tx.empty:
         return tx
-    tx["date"] = pd.to_datetime(tx["date"])
+    # utc=True is REQUIRED, not tidiness: DEGIRO stamps each trade with the local offset,
+    # so a portfolio spanning a DST change holds both +02:00 and +01:00 and pandas raises
+    # "Mixed timezones detected" on a bare to_datetime.
+    tx["date"] = pd.to_datetime(tx["date"], utc=True).dt.tz_localize(None)
     merged = tx.merge(products, left_on="product_id", right_on="id", how="left")
     cols = ["date", "name", "symbol", "buysell", "quantity", "price", "total_plus_all_fees_in_base_currency"]
     return merged[[c for c in cols if c in merged]].sort_values("date", ascending=False)
@@ -608,53 +670,29 @@ def realized_gains() -> pd.DataFrame:
 
     Empty until you sell. In NL Box 3 these are NOT taxed for private investors — this
     report is informational (and useful if your situation ever differs).
+
+    Derived from the same `_fifo_lots()` walk as transaction_pnl() and lot_matches().
+    It used to carry its own copy of the matcher; a property test pinned the totals
+    together, but two implementations of one rule is one too many.
     """
-    tx = store.read_df("transactions")
-    if tx.empty or (tx["quantity"] < 0).sum() == 0:
-        return pd.DataFrame(columns=["date", "name", "quantity", "proceeds", "cost", "gain", "unmatched_quantity"])
-
-    tx = tx.copy()
-    tx["date"] = pd.to_datetime(tx["date"], utc=True).dt.tz_localize(None)
-    cost_field = "total_plus_all_fees_in_base_currency"
-    tx[cost_field] = pd.to_numeric(tx[cost_field], errors="coerce").fillna(0.0)
-    products = store.read_df("products").set_index("id")["name"].to_dict()
-
-    rows = []
-    for pid, grp in tx.sort_values("date").groupby("product_id"):
-        lots: list[list[float]] = []  # [qty_remaining, unit_cost_base]
-        for _, t in grp.iterrows():
-            qty = float(t["quantity"])
-            unit = abs(float(t[cost_field])) / abs(qty) if qty else 0.0
-            if qty > 0:
-                lots.append([qty, unit])
-            elif qty < 0:
-                sell_qty = -qty
-                proceeds = abs(float(t[cost_field]))
-                matched_cost = 0.0
-                remaining = sell_qty
-                while remaining > 1e-9 and lots:
-                    lot = lots[0]
-                    take = min(lot[0], remaining)
-                    matched_cost += take * lot[1]
-                    lot[0] -= take
-                    remaining -= take
-                    if lot[0] <= 1e-9:
-                        lots.pop(0)
-                rows.append(
-                    {
-                        "date": t["date"].date().isoformat(),
-                        "name": products.get(pid, str(pid)),
-                        "quantity": sell_qty,
-                        "proceeds": proceeds,
-                        "cost": matched_cost,
-                        "gain": proceeds - matched_cost,
-                        # >0 when the sale could not be matched to enough buy lots,
-                        # which means the transaction history does not reach back far
-                        # enough; the gain above is overstated by that many shares.
-                        "unmatched_quantity": remaining if remaining > 1e-9 else 0.0,
-                    }
-                )
-    return pd.DataFrame(rows)
+    cols = ["date", "name", "quantity", "proceeds", "cost", "gain", "unmatched_quantity"]
+    per_tx, _ = _fifo_lots()
+    sells = [r for r in per_tx if r["side"] == "SELL"]
+    if not sells:
+        return pd.DataFrame(columns=cols)
+    rows = [
+        {
+            "date": r["date"],
+            "name": r["name"],
+            "quantity": r["quantity"],
+            "proceeds": r["cash_flow"],
+            "cost": r["cash_flow"] - r["realized"],
+            "gain": r["realized"],
+            "unmatched_quantity": r.get("unmatched_quantity", 0.0),
+        }
+        for r in sells
+    ]
+    return pd.DataFrame(rows)[cols]
 
 
 def _open_lot_cost() -> dict[object, float]:
@@ -844,6 +882,82 @@ def lot_matches() -> pd.DataFrame:
     if not matches:
         return pd.DataFrame(columns=cols)
     return pd.DataFrame(matches)[cols].sort_values("sell_date", ascending=False).reset_index(drop=True)
+
+
+def ticker_price_check(tolerance_pct: float = 3.0) -> pd.DataFrame:
+    """Validate each resolved price series against the prices you actually traded at.
+
+    Auto-resolution yields a bare DEGIRO symbol with no exchange suffix, and the nasty
+    failure is not a 404 -- it is a DIFFERENT security on another exchange that
+    backfills plausible-looking wrong prices (bare `DFEN`/`JEDI` each pulled 57 rows of
+    an unrelated fund, ~50% off the real Xetra closes). A non-empty series proves
+    nothing; matching it to a transaction price does. One row per holding, comparing
+    each trade to that day's stored close and reporting the worst gap.
+    """
+    cols = ["name", "ticker", "rows", "trades_checked", "worst_gap_pct", "status"]
+    tx = _prepared_transactions()
+    products = store.read_df("products")
+    px = store.read_df("prices")
+    if tx.empty or products.empty:
+        return pd.DataFrame(columns=cols)
+
+    mapping, _ = prices.resolve_tickers(products)
+    names = products.set_index("id")["name"].to_dict()
+    currencies = products.set_index("id")["currency"].to_dict()
+    closes: dict[tuple[str, str], float] = {}
+    if not px.empty:
+        closes = {(r.ticker, r.date): float(r.close) for r in px.itertuples()}
+
+    rows = []
+    for pid, grp in tx.groupby("product_id"):
+        ticker = mapping.get(int(pid))
+        if not ticker:
+            continue
+        _, divisor = prices.quote_adjustment(currencies.get(pid))
+        n_rows = sum(1 for t, _d in closes if t == ticker)
+        worst = None
+        checked = 0
+        for _, t in grp.iterrows():
+            close = closes.get((ticker, t["date"].strftime("%Y-%m-%d")))
+            traded = float(t["price"]) if pd.notna(t["price"]) else 0.0
+            if not close or not traded:
+                continue
+            checked += 1
+            gap = (close / divisor / traded - 1) * 100
+            if worst is None or abs(gap) > abs(worst):
+                worst = gap
+        if n_rows == 0:
+            status = "no price history"
+        elif checked == 0:
+            status = "no overlapping day"
+        elif worst is not None and abs(worst) > tolerance_pct:
+            status = "MISMATCH"
+        else:
+            status = "ok"
+        rows.append(
+            {
+                "name": names.get(pid, str(pid)),
+                "ticker": ticker,
+                "rows": n_rows,
+                "trades_checked": checked,
+                "worst_gap_pct": worst,
+                "status": status,
+            }
+        )
+    df = pd.DataFrame(rows, columns=cols)
+    return df.sort_values("worst_gap_pct", key=lambda c: c.abs(), ascending=False, na_position="first")
+
+
+def price_freshness() -> dict:
+    """Latest cached price date vs the last sync -- a stale feed values yesterday wrong."""
+    px = store.read_df("prices")
+    latest = str(px["date"].max()) if not px.empty else None
+    with store.connection() as conn:
+        last_sync = store.get_meta(conn, "last_sync", None)
+    lag = None
+    if latest and last_sync:
+        lag = (pd.Timestamp(last_sync) - pd.Timestamp(latest)).days
+    return {"latest_price": latest, "last_sync": last_sync, "lag_days": lag}
 
 
 def reconstruction_delta(reconstructed_holdings: float) -> dict:

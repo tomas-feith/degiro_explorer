@@ -82,12 +82,12 @@ addopts = "-q --cov --cov-report=term-missing"
 [tool.coverage.run]
 source = ["degiro_explorer", "scripts"]
 source_pkgs = ["config"] # top-level module, not a package dir -- `source` would skip it
-omit = ["dashboard/*"] # Streamlit UI: exercised by running it, not by unit tests
+omit = ["dashboard/*"] # Streamlit UI: rendered end-to-end by tests/test_dashboard.py
 
 [tool.coverage.report]
-# A ratchet, not an aspiration: currently ~43%, so this only catches regressions.
+# A ratchet, not an aspiration: currently ~74%, so this only catches regressions.
 # Raise it as tests land rather than picking a number the suite cannot honestly meet.
-fail_under = 43
+fail_under = 70
 show_missing = true
 exclude_also = [
     "if __name__ == .__main__.:",

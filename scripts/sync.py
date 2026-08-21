@@ -32,12 +32,22 @@ logger = logging.getLogger("sync")
 REPORTS_DIR = ROOT / "data" / "reports"
 
 
+def _earliest_transaction_date(tx_df: pd.DataFrame) -> date:
+    """First trade date.
+
+    utc=True is REQUIRED: DEGIRO stamps each trade with the local offset, so a history
+    spanning a DST change carries both +02:00 and +01:00 and a bare to_datetime raises
+    "Mixed timezones detected" -- which would abort the sync before reconstruction.
+    """
+    return pd.to_datetime(tx_df["date"], utc=True).min().date()
+
+
 def _fetch_reports(session) -> None:
     """Pull official DEGIRO CSV reports and save them under data/reports/."""
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     today = date.today()
     tx_df = store.read_df("transactions")
-    start = pd.to_datetime(tx_df["date"]).min().date() if not tx_df.empty else date(today.year, 1, 1)
+    start = _earliest_transaction_date(tx_df) if not tx_df.empty else date(today.year, 1, 1)
     try:
         account_csv = fetch.fetch_account_report(session, start, today)
         if account_csv:
@@ -119,9 +129,8 @@ def main() -> int:
     if tx_df.empty:
         logger.warning("No transactions — skipping price backfill and reconstruction.")
         return 0
-    import pandas as pd
 
-    start = pd.to_datetime(tx_df["date"]).min().date()
+    start = _earliest_transaction_date(tx_df)
     end = date.today()
 
     prices.backfill_prices(mapping, start, end)
