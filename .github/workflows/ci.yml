@@ -28,7 +28,7 @@ jobs:
 
       - name: Install uv
         # Pin the exact tag: setup-uv does not publish a moving `v9` major tag.
-        uses: astral-sh/setup-uv@v9.0.0
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
 
