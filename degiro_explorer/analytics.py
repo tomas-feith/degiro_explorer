@@ -633,16 +633,15 @@ class Box3Params:
 # 2026 hike to 7.78% with a EUR 51,396 allowance was scrapped; the enacted figures
 # are 6.00% and EUR 59,357).
 #
-# 2027 is PROVISIONAL. The 6.37% investment forfait has been reported but not enacted,
-# and the 2027 heffingsvrij vermogen has not been published at all — the allowance below
-# is 2026's carried forward as a placeholder, so the estimate is conservative-ish but
-# wrong in a knowable way. Revisit after Prinsjesdag (Sep 2026) and drop `provisional`
-# once the figures are in the enacted Belastingplan.
+# 2027 is still PROVISIONAL. Prinsjesdag (17 Sep 2026) put 6.37% and a EUR 60,098
+# allowance (EUR 120,196 for fiscal partners) into the Belastingplan 2027, but it is a
+# bill until the Eerste Kamer votes on it (normally December). Drop `provisional` once
+# it is enacted -- and check the figures did not move on the way through.
 BOX3_PARAMS: dict[int, Box3Params] = {
     2024: Box3Params(deemed_return_pct=6.04, allowance=57000.0, rate_pct=36.0),
     2025: Box3Params(deemed_return_pct=5.88, allowance=57684.0, rate_pct=36.0),
     2026: Box3Params(deemed_return_pct=6.00, allowance=59357.0, rate_pct=36.0),
-    2027: Box3Params(deemed_return_pct=6.37, allowance=59357.0, rate_pct=36.0, provisional=True),
+    2027: Box3Params(deemed_return_pct=6.37, allowance=60098.0, rate_pct=36.0, provisional=True),
 }
 
 LATEST_BOX3_YEAR = max(BOX3_PARAMS)

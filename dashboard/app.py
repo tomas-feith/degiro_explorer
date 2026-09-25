@@ -821,9 +821,9 @@ def _tax_tab(data, base):
     params = analytics.box3_params(tax_year)
     if params.provisional:
         st.warning(
-            f"⚠️ The {tax_year} figures are **provisional** — announced but not yet enacted, "
-            f"and the tax-free allowance has not been published ({tax_year - 1}'s is used as a "
-            "placeholder). Treat this year's estimate as indicative only."
+            f"⚠️ The {tax_year} figures are **provisional** — proposed in the Belastingplan "
+            "but not yet enacted, and Box 3 figures have been revised before enactment "
+            "before. Treat this year's estimate as indicative only."
         )
 
     latest_value = float(data["daily"]["total_value"].iloc[-1]) if not data["daily"].empty else 0.0

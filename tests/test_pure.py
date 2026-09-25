@@ -33,9 +33,10 @@ def test_box3_params_unknown_year_falls_back_to_latest():
 
 
 def test_box3_params_2027_is_flagged_provisional():
-    """2027 figures are announced, not enacted, and the allowance is a placeholder."""
+    """2027 figures are in the Belastingplan 2027 (Prinsjesdag 2026) but not yet enacted."""
     p = analytics.box3_params(2027)
     assert p.deemed_return_pct == 6.37
+    assert p.allowance == 60098.0
     assert p.provisional is True
     assert analytics.box3_params(2026).provisional is False
 
